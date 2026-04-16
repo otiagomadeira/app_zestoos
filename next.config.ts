@@ -1,7 +1,8 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  /* config options here */
-};
+  // Strict mode for React best practices
+  reactStrictMode: true,
+}
 
-export default nextConfig;
+export default nextConfig
