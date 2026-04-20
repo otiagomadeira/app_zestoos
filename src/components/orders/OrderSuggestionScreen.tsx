@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import type { OrderSuggestion } from '@/types/database'
 import { fetchOrderSuggestions, supabase } from '@/lib/supabase'
+import { formatStockQty } from '@/lib/units'
 
 type SelectedItems = Record<string, number> // articleId → qty to order (in order_unit)
 
@@ -50,6 +51,12 @@ export default function OrderSuggestionScreen() {
   }, [suggestions])
 
   const selectedCount = Object.keys(selected).length
+
+  // Artigos selecionados mas sem fornecedor preferido — serão ignorados na criação de ordens
+  const noSupplierSelected = useMemo(() =>
+    suggestions.filter(s => !s.supplier_id && selected[s.article_id] !== undefined),
+    [suggestions, selected]
+  )
 
   // Compute total value for selected items
   const totalValue = useMemo(() => {
@@ -151,10 +158,10 @@ export default function OrderSuggestionScreen() {
         <div style={{ textAlign: 'center' }}>
           <div style={{
             width: 40, height: 40, borderRadius: '50%',
-            border: '3px solid #2A2A2A', borderTopColor: '#FF5F1F',
+            border: '3px solid var(--border)', borderTopColor: 'var(--action)',
             animation: 'spin 0.8s linear infinite', margin: '0 auto 16px',
           }} />
-          <p style={{ color: '#555555', fontSize: 14 }}>A calcular sugestões…</p>
+          <p style={{ color: 'var(--text-subtle)', fontSize: 14 }}>A calcular sugestões…</p>
         </div>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
@@ -165,11 +172,11 @@ export default function OrderSuggestionScreen() {
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '0 16px 120px' }}>
 
       {/* Header */}
-      <div style={{ padding: '20px 0 16px', borderBottom: '1px solid #1C1C1C', marginBottom: 20 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#F5F5F5' }}>
+      <div style={{ padding: '20px 0 16px', borderBottom: '1px solid rgba(28,20,10,0.1)', marginBottom: 20 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>
           Sugestão de Encomenda
         </h2>
-        <p style={{ fontSize: 12, color: '#555555', marginTop: 4 }}>
+        <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 4 }}>
           {suggestions.length} artigo{suggestions.length !== 1 ? 's' : ''} abaixo do par level
         </p>
       </div>
@@ -177,8 +184,8 @@ export default function OrderSuggestionScreen() {
       {/* Banners */}
       {error && (
         <div style={{
-          background: 'rgba(239,68,68,0.1)', border: '1px solid #EF4444',
-          borderRadius: 8, padding: '12px 16px', color: '#EF4444',
+          background: 'rgba(239,68,68,0.08)', border: '1px solid #EF4444',
+          borderRadius: 8, padding: '12px 16px', color: '#C0392B',
           fontSize: 13, marginBottom: 16,
         }}>
           {error}
@@ -186,24 +193,42 @@ export default function OrderSuggestionScreen() {
       )}
       {success && (
         <div style={{
-          background: 'rgba(34,197,94,0.1)', border: '1px solid #22C55E',
-          borderRadius: 8, padding: '12px 16px', color: '#22C55E',
+          background: 'rgba(85,107,71,0.1)', border: '1px solid rgba(85,107,71,0.4)',
+          borderRadius: 8, padding: '12px 16px', color: 'var(--success)',
           fontSize: 13, fontWeight: 600, marginBottom: 16, textAlign: 'center',
         }}>
           ✓ {success}
         </div>
       )}
 
+      {noSupplierSelected.length > 0 && (
+        <div style={{
+          background:   'rgba(184,134,11,0.08)',
+          border:       '1px solid rgba(184,134,11,0.4)',
+          borderRadius: 8,
+          padding:      '10px 14px',
+          color:        '#A07010',
+          fontSize:     13,
+          marginBottom: 16,
+        }}>
+          <span style={{ fontWeight: 600 }}>
+            {noSupplierSelected.length} artigo{noSupplierSelected.length !== 1 ? 's' : ''} sem fornecedor preferido não {noSupplierSelected.length !== 1 ? 'serão encomendados' : 'será encomendado'}:
+          </span>
+          {' '}
+          {noSupplierSelected.map(s => s.name).join(', ')}
+        </div>
+      )}
+
       {suggestions.length === 0 && !loading && (
         <div style={{
-          background: 'rgba(34,197,94,0.06)', border: '1px solid #1C4A29',
+          background: 'rgba(85,107,71,0.06)', border: '1px solid rgba(85,107,71,0.3)',
           borderRadius: 12, padding: '32px 24px', textAlign: 'center',
         }}>
           <p style={{ fontSize: 32, marginBottom: 12 }}>✓</p>
-          <p style={{ fontSize: 16, fontWeight: 600, color: '#22C55E' }}>
+          <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--success)' }}>
             Tudo em stock!
           </p>
-          <p style={{ fontSize: 13, color: '#555555', marginTop: 8 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-subtle)', marginTop: 8 }}>
             Nenhum artigo abaixo do par level.
           </p>
         </div>
@@ -219,15 +244,15 @@ export default function OrderSuggestionScreen() {
           }}>
             <div style={{
               width: 6, height: 6, borderRadius: '50%',
-              background: '#FF5F1F', flexShrink: 0,
+              background: 'var(--action)', flexShrink: 0,
             }} />
             <span style={{
-              fontSize: 12, fontWeight: 600, color: '#9A9A9A',
+              fontSize: 12, fontWeight: 600, color: 'var(--text-subtle)',
               letterSpacing: '0.08em', textTransform: 'uppercase',
             }}>
               {group.name}
             </span>
-            <div style={{ flex: 1, height: 1, background: '#1C1C1C' }} />
+            <div style={{ flex: 1, height: 1, background: 'rgba(28,20,10,0.1)' }} />
           </div>
 
           {/* Items */}
@@ -241,8 +266,8 @@ export default function OrderSuggestionScreen() {
                 <div
                   key={s.article_id}
                   style={{
-                    background:   isSelected ? 'rgba(255,95,31,0.06)' : '#141414',
-                    border:       `1px solid ${isSelected ? '#FF5F1F' : '#2A2A2A'}`,
+                    background:   isSelected ? 'rgba(196,106,45,0.06)' : 'var(--surface)',
+                    border:       `1px solid ${isSelected ? 'var(--action)' : 'var(--border)'}`,
                     borderRadius: 12,
                     padding:      '14px 16px',
                     transition:   'all 0.15s',
@@ -258,8 +283,8 @@ export default function OrderSuggestionScreen() {
                           height:         24,
                           minWidth:       24,
                           borderRadius:   6,
-                          border:         `2px solid ${isSelected ? '#FF5F1F' : '#2A2A2A'}`,
-                          background:     isSelected ? '#FF5F1F' : 'transparent',
+                          border:         `2px solid ${isSelected ? 'var(--action)' : 'rgba(28,20,10,0.2)'}`,
+                          background:     isSelected ? 'var(--action)' : 'transparent',
                           cursor:         'pointer',
                           display:        'flex',
                           alignItems:     'center',
@@ -276,27 +301,27 @@ export default function OrderSuggestionScreen() {
                       </button>
 
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{ fontSize: 15, fontWeight: 600, color: '#F5F5F5' }}>{s.name}</p>
+                        <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)' }}>{s.name}</p>
                         <div style={{ display: 'flex', gap: 16, marginTop: 4, flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: 11, color: '#555555' }}>
+                          <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
                             Stock:{' '}
                             <span style={{
                               fontFamily: 'JetBrains Mono, monospace',
-                              color: s.current_qty <= 0 ? '#EF4444' : '#F59E0B',
+                              color: s.current_qty <= 0 ? '#EF4444' : '#A07010',
                             }}>
-                              {s.current_qty.toFixed(s.current_qty % 1 === 0 ? 0 : 1)} {s.unit}
+                              {formatStockQty(s.current_qty, s.unit)}
                             </span>
                           </span>
-                          <span style={{ fontSize: 11, color: '#555555' }}>
+                          <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
                             Par:{' '}
-                            <span style={{ fontFamily: 'JetBrains Mono, monospace', color: '#9A9A9A' }}>
-                              {s.par_level} {s.unit}
+                            <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--text-muted)' }}>
+                              {formatStockQty(s.par_level, s.unit)}
                             </span>
                           </span>
                           {s.price && (
-                            <span style={{ fontSize: 11, color: '#555555' }}>
+                            <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
                               Preço:{' '}
-                              <span style={{ fontFamily: 'JetBrains Mono, monospace', color: '#9A9A9A' }}>
+                              <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--text-muted)' }}>
                                 {s.price.toFixed(2)}€/{s.order_unit}
                               </span>
                             </span>
@@ -319,8 +344,8 @@ export default function OrderSuggestionScreen() {
                           disabled={!isSelected}
                           style={{
                             width: 32, height: 32, minHeight: 44,
-                            borderRadius: 6, border: '1px solid #2A2A2A',
-                            background: '#1C1C1C', color: '#9A9A9A',
+                            borderRadius: 6, border: '1px solid rgba(28,20,10,0.15)',
+                            background: 'var(--surface-2)', color: 'var(--text-muted)',
                             cursor: isSelected ? 'pointer' : 'default',
                             opacity: isSelected ? 1 : 0.3,
                             fontSize: 18, display: 'flex',
@@ -332,7 +357,7 @@ export default function OrderSuggestionScreen() {
                           fontFamily:  'JetBrains Mono, monospace',
                           fontSize:    18,
                           fontWeight:  700,
-                          color:       isSelected ? '#F5F5F5' : '#555555',
+                          color:       isSelected ? 'var(--text)' : 'var(--text-subtle)',
                           minWidth:    40,
                           textAlign:   'center',
                         }}>
@@ -344,8 +369,8 @@ export default function OrderSuggestionScreen() {
                           disabled={!isSelected}
                           style={{
                             width: 32, height: 32, minHeight: 44,
-                            borderRadius: 6, border: '1px solid #2A2A2A',
-                            background: '#1C1C1C', color: '#9A9A9A',
+                            borderRadius: 6, border: '1px solid rgba(28,20,10,0.15)',
+                            background: 'var(--surface-2)', color: 'var(--text-muted)',
                             cursor: isSelected ? 'pointer' : 'default',
                             opacity: isSelected ? 1 : 0.3,
                             fontSize: 18, display: 'flex',
@@ -356,12 +381,12 @@ export default function OrderSuggestionScreen() {
 
                       <span style={{
                         fontSize:   10,
-                        color:      '#555555',
+                        color:      'var(--text-subtle)',
                         fontFamily: 'JetBrains Mono, monospace',
                       }}>
                         {s.order_unit ?? s.unit}
                         {lineTotal !== null && isSelected && (
-                          <span style={{ color: '#9A9A9A' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>
                             {' '}· {lineTotal.toFixed(2)}€
                           </span>
                         )}
@@ -382,9 +407,8 @@ export default function OrderSuggestionScreen() {
           bottom:         0,
           left:           0,
           right:          0,
-          background:     'rgba(10,10,10,0.95)',
-          backdropFilter: 'blur(12px)',
-          borderTop:      '1px solid #1C1C1C',
+          background:     'var(--primary)',
+          borderTop:      'none',
           padding:        '16px 20px',
           display:        'flex',
           alignItems:     'center',
@@ -393,7 +417,7 @@ export default function OrderSuggestionScreen() {
           zIndex:         100,
         }}>
           <div>
-            <p style={{ fontSize: 13, fontWeight: 600, color: '#F5F5F5' }}>
+            <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-on-primary)' }}>
               {selectedCount} artigo{selectedCount !== 1 ? 's' : ''} selecionado{selectedCount !== 1 ? 's' : ''}
             </p>
             {totalValue > 0 && (
@@ -401,7 +425,7 @@ export default function OrderSuggestionScreen() {
                 fontFamily: 'JetBrains Mono, monospace',
                 fontSize:   16,
                 fontWeight: 700,
-                color:      '#FF5F1F',
+                color:      'var(--action)',
                 marginTop:  2,
               }}>
                 {totalValue.toFixed(2)} €
@@ -418,9 +442,8 @@ export default function OrderSuggestionScreen() {
               padding:        '0 24px',
               borderRadius:   10,
               border:         'none',
-              background:     selectedCount === 0 ? '#1C1C1C' : '#FF5F1F',
-              color:          selectedCount === 0 ? '#555555' : '#FFFFFF',
-              fontFamily:     'Inter, sans-serif',
+              background:     selectedCount === 0 ? 'rgba(242,233,220,0.1)' : 'var(--action)',
+              color:          selectedCount === 0 ? 'rgba(242,233,220,0.3)' : '#FFFFFF',
               fontSize:       15,
               fontWeight:     600,
               cursor:         selectedCount === 0 ? 'default' : 'pointer',

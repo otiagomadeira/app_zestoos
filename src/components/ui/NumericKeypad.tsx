@@ -47,14 +47,12 @@ export default function NumericKeypad({
     onChange(next)
   }, [value, onChange, maxDecimals])
 
-  const numValue = parseFloat(value) || 0
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Display */}
       <div style={{
-        background:   '#141414',
-        border:       '1px solid #2A2A2A',
+        background:   'var(--bg)',
+        border:       '1px solid rgba(28,20,10,0.15)',
         borderRadius: 12,
         padding:      '16px 20px',
         display:      'flex',
@@ -66,7 +64,7 @@ export default function NumericKeypad({
           fontFamily: 'JetBrains Mono, monospace',
           fontSize:   40,
           fontWeight: 600,
-          color:      '#F5F5F5',
+          color:      'var(--text)',
           letterSpacing: '-1px',
         }}>
           {value || '0'}
@@ -75,7 +73,7 @@ export default function NumericKeypad({
           <span style={{
             fontFamily: 'JetBrains Mono, monospace',
             fontSize:   18,
-            color:      '#9A9A9A',
+            color:      'var(--text-subtle)',
           }}>
             {unit}
           </span>
@@ -90,8 +88,6 @@ export default function NumericKeypad({
       }}>
         {KEYS.map((key) => {
           const isBackspace = key === '⌫'
-          const isDot       = key === '.'
-          const isZero      = key === '0'
 
           return (
             <button
@@ -101,9 +97,9 @@ export default function NumericKeypad({
                 height:         60,
                 minHeight:      44,
                 borderRadius:   10,
-                border:         '1px solid #2A2A2A',
-                background:     isBackspace ? '#1C1C1C' : '#141414',
-                color:          isBackspace ? '#9A9A9A' : '#F5F5F5',
+                border:         '1px solid var(--border)',
+                background:     isBackspace ? 'var(--surface-2)' : 'var(--surface)',
+                color:          isBackspace ? 'var(--text-muted)' : 'var(--text)',
                 fontFamily:     'JetBrains Mono, monospace',
                 fontSize:       isBackspace ? 20 : 22,
                 fontWeight:     500,
@@ -116,22 +112,22 @@ export default function NumericKeypad({
               }}
               onMouseDown={(e) => {
                 const t = e.currentTarget
-                t.style.background = '#242424'
+                t.style.background = '#D9CDB8'
                 t.style.transform  = 'scale(0.96)'
               }}
               onMouseUp={(e) => {
                 const t = e.currentTarget
-                t.style.background = isBackspace ? '#1C1C1C' : '#141414'
+                t.style.background = isBackspace ? 'var(--surface-2)' : 'var(--surface)'
                 t.style.transform  = 'scale(1)'
               }}
               onTouchStart={(e) => {
                 const t = e.currentTarget
-                t.style.background = '#242424'
+                t.style.background = '#D9CDB8'
                 t.style.transform  = 'scale(0.96)'
               }}
               onTouchEnd={(e) => {
                 const t = e.currentTarget
-                t.style.background = isBackspace ? '#1C1C1C' : '#141414'
+                t.style.background = isBackspace ? 'var(--surface-2)' : 'var(--surface)'
                 t.style.transform  = 'scale(1)'
               }}
             >
@@ -145,23 +141,22 @@ export default function NumericKeypad({
       {onConfirm && (
         <button
           onClick={onConfirm}
-          disabled={numValue <= 0 && value !== '0'}
+          disabled={isNaN(parseFloat(value))}
           style={{
             height:         60,
             minHeight:      44,
             borderRadius:   10,
             border:         'none',
-            background:     '#FF5F1F',
+            background:     'var(--action)',
             color:          '#FFFFFF',
-            fontFamily:     'Inter, sans-serif',
             fontSize:       16,
             fontWeight:     600,
             cursor:         'pointer',
             transition:     'background 0.15s',
             letterSpacing:  '0.02em',
           }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#CC4C19' }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#FF5F1F' }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--action-hover)' }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--action)' }}
         >
           Confirmar Contagem
         </button>

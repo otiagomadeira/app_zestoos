@@ -1,30 +1,37 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+/* Fonts loaded via next/font/google in layout.tsx — no external import needed */
 
 @import "tailwindcss";
 
 :root {
-  /* Zesto OS Color System */
-  --bg-base:      #0A0A0A;
-  --bg-surface:   #141414;
-  --bg-elevated:  #1C1C1C;
-  --bg-overlay:   #242424;
+  /* Zesto OS Design Tokens — source of truth */
 
-  --accent:       #FF5F1F;
-  --accent-dim:   #CC4C19;
-  --accent-glow:  rgba(255, 95, 31, 0.15);
+  /* Backgrounds */
+  --bg:        #F2E9DC;
+  --surface:   #EDE0CE;
+  --surface-2: #E5D5B8;
+  --primary:   #1F3A2E;
 
-  --text-primary:   #F5F5F5;
-  --text-secondary: #9A9A9A;
-  --text-muted:     #555555;
+  /* Actions */
+  --action:      #C46A2D;
+  --action-hover: #A85822;
+  --action-glow:  rgba(196, 106, 45, 0.15);
 
-  --border:       #2A2A2A;
-  --border-focus: #FF5F1F;
+  /* Text */
+  --text:           #1C1C1C;
+  --text-muted:     #5C5040;
+  --text-subtle:    #9A8A78;
+  --text-on-primary: #F2E9DC;
 
-  --success: #22C55E;
+  /* Borders */
+  --border:       rgba(28, 20, 10, 0.12);
+  --border-focus: #C46A2D;
+
+  /* States */
+  --success: #556B47;
   --warning: #F59E0B;
-  --danger:  #EF4444;
+  --error:   #8B2E2E;
 
-  /* Touch targets */
+  /* Utilities */
   --touch-min: 44px;
 }
 
@@ -36,12 +43,13 @@ html,
 body {
   background-color: var(--bg-base);
   color: var(--text-primary);
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: var(--font-montserrat), system-ui, sans-serif;
   font-size: 16px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overscroll-behavior: none;
+  color-scheme: light;
 }
 
 * {
@@ -50,11 +58,15 @@ body {
 
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #242424; border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: rgba(28, 20, 10, 0.15); border-radius: 2px; }
 
-.mono { font-family: 'JetBrains Mono', monospace; }
+h1, h2, h3, h4 {
+  font-family: var(--font-playfair), Georgia, serif;
+}
+
+.mono { font-family: var(--font-mono), monospace; }
 
 :focus-visible {
-  outline: 2px solid #FF5F1F;
+  outline: 2px solid #C46A2D;
   outline-offset: 2px;
 }
