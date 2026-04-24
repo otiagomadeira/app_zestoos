@@ -77,7 +77,10 @@ export function extractName(line: string, cl: ClassifiedLine): string {
     return line.replace(BARE_NUMBER_RE, '').trim() || line
   }
 
-  return line
+  // type='unit', normalized=false (sem número) — strip container words (ex: "Mel frasco" → "Mel")
+  const words   = line.split(/\s+/).filter(Boolean)
+  const cleaned = words.filter(w => !CONTAINER_CONTEXT_WORDS.includes(w.toLowerCase()))
+  return (cleaned.length > 0 ? cleaned.join(' ') : line)
 }
 
 // ── Palavras-contexto que indicam unit='un' quando não há quantidade explícita
