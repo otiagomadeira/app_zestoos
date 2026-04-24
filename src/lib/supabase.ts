@@ -17,56 +17,6 @@ export const supabase = createClient()
 
 // ── Stock ─────────────────────────────────────────────────────
 
-// Variante de tamanho de embalagem de um artigo (tabela article_sizes)
-export type ArticleSize = {
-  label:         string   // notação original (ex: "200g", "1kg", "saco 5kg")
-  base_per_unit: number   // base_units por unidade (ex: 200 para 200g)
-}
-
-/**
- * Devolve um Map de article_id → lista de tamanhos disponíveis para contagem.
- * Fonte: tabela article_sizes (independente de fornecedores).
- * Carregado uma vez com o inventário.
- */
-export async function fetchAllArticleSizes(): Promise<Map<string, ArticleSize[]>> {
-  const { data, error } = await supabase
-    .from('article_sizes')
-    .select('article_id, label, base_per_unit')
-    .order('sort_order')
-
-  if (error) throw error
-
-  const map = new Map<string, ArticleSize[]>()
-  for (const row of (data ?? []) as { article_id: string; label: string; base_per_unit: number }[]) {
-    if (!map.has(row.article_id)) map.set(row.article_id, [])
-    map.get(row.article_id)!.push({
-      label:         row.label,
-      base_per_unit: row.base_per_unit,
-    })
-  }
-  return map
-}
-
-/**
- * Grava variantes de tamanho para um artigo.
- * Chamado após createArticle durante o bulk import.
- */
-export async function saveArticleSizes(
-  articleId: string,
-  sizes: { label: string; base_per_unit: number; sort_order?: number }[],
-): Promise<void> {
-  if (sizes.length === 0) return
-  const { error } = await supabase
-    .from('article_sizes')
-    .insert(sizes.map((s, i) => ({
-      article_id:    articleId,
-      label:         s.label,
-      base_per_unit: s.base_per_unit,
-      sort_order:    s.sort_order ?? i,
-    })))
-  if (error) throw error
-}
-
 export async function fetchCurrentStock(): Promise<CurrentStock[]> {
   const { data, error } = await supabase
     .from('current_stock')
@@ -78,87 +28,40 @@ export async function fetchCurrentStock(): Promise<CurrentStock[]> {
   return (data ?? []) as CurrentStock[]
 }
 
-export type CountComponent = {
-  size_label:    string   // ex: "saco 200g" — label legível para auditoria
-  qty:           number   // nº de unidades deste tamanho
-  base_per_unit: number   // base_units por unidade (ex: 200g)
-}
-
 export async function saveStockCount(
-  articleId:            string,
-  newQtyStock:          number,       // total em stock_unit (usado para o notes)
-  stockUnit:            string,       // unidade de stock (para o notes do movimento)
-  components?:          CountComponent[],  // composição opcional (multi-tamanho)
-  notes?:               string,
-  knownCurrentQtyBase?: number,       // evita SELECT se caller já tem estes valores
-  knownBaseUnit?:       string,
-  knownBasePerStock?:   number,
+  articleId:   string,
+  newQty:      number,   // novo nível de stock em base_unit (article.unit)
+  unit:        string,   // article.unit — para notas do movimento
+  currentQty?: number,   // optimização: evita SELECT se o caller já tem o valor
 ): Promise<{ saved: boolean }> {
-  // 1. Usa valores conhecidos do caller se disponíveis — evita SELECT redundante
-  let basePerStock:   number
   let currentQtyBase: number
-  let baseUnit:       string
 
-  if (knownCurrentQtyBase !== undefined && knownBaseUnit !== undefined && knownBasePerStock !== undefined) {
-    basePerStock   = knownBasePerStock
-    currentQtyBase = knownCurrentQtyBase
-    baseUnit       = knownBaseUnit
+  if (currentQty !== undefined) {
+    currentQtyBase = currentQty
   } else {
-    const { data: current, error: stockErr } = await supabase
+    const { data, error } = await supabase
       .from('current_stock')
-      .select('current_qty_base, base_per_stock, unit')
+      .select('current_qty')
       .eq('article_id', articleId)
       .single()
-    if (stockErr) throw stockErr
-    basePerStock   = current?.base_per_stock   ?? 1
-    currentQtyBase = current?.current_qty_base ?? 0
-    baseUnit       = current?.unit ?? stockUnit
+    if (error) throw error
+    currentQtyBase = (data as { current_qty: number } | null)?.current_qty ?? 0
   }
 
-  // 2. Converter nova quantidade de stock_unit para base_unit
-  //    Multi-tamanho: soma exata de (qty × base_per_unit) por componente
-  //    Simples: newQtyStock × base_per_stock do fornecedor preferido
-  const newQtyBase = components && components.length > 0
-    ? components.reduce((sum, c) => sum + c.qty * c.base_per_unit, 0)
-    : newQtyStock * basePerStock
+  const delta = newQty - currentQtyBase
+  if (Math.abs(delta) < 0.0001) return { saved: false }
 
-  // 3. Delta em base_unit
-  const deltaBase = newQtyBase - currentQtyBase
-
-  // 4. Skip se não há mudança — devolve saved: false para feedback honesto
-  if (Math.abs(deltaBase) < 0.0001) return { saved: false }
-
-  // 5. Inserir ADJUSTMENT em base_unit (garante consistência histórica)
-  const { data: movement, error: mvErr } = await supabase
+  const { error } = await supabase
     .from('stock_movements')
     .insert({
       article_id: articleId,
       type:       'ADJUSTMENT',
-      quantity:   deltaBase,
-      unit:       baseUnit,
-      notes:      notes ?? `Contagem manual: ${newQtyStock} ${stockUnit}`,
+      quantity:   delta,
+      unit,
+      notes:      `Contagem manual: ${newQty} ${unit}`,
       counted_at: new Date().toISOString(),
     })
-    .select('id')
-    .single()
-
-  if (mvErr) throw mvErr
-
-  // 6. Inserir linhas de composição se fornecidas
-  if (components && components.length > 0 && movement) {
-    const { error: linesErr } = await supabase
-      .from('stock_count_lines')
-      .insert(
-        components.map(c => ({
-          movement_id:   movement.id,
-          size_label:    c.size_label,
-          qty:           c.qty,
-          base_per_unit: c.base_per_unit,
-          base_qty:      c.qty * c.base_per_unit,
-        }))
-      )
-    if (linesErr) throw linesErr
-  }
+  if (error) throw error
 
   return { saved: true }
 }
@@ -261,80 +164,8 @@ export async function updateOrderStatus(
 }
 
 export async function receiveOrder(orderId: string): Promise<void> {
-  // 1. Buscar itens da encomenda
-  const { data: items, error: itemsErr } = await supabase
-    .from('order_items')
-    .select('id, article_id, quantity_ordered, order_unit')
-    .eq('order_id', orderId)
-
-  if (itemsErr) throw itemsErr
-  if (!items || items.length === 0) return
-
-  const articleIds = items.map((i: { article_id: string }) => i.article_id)
-
-  // 2. Buscar info de stock atual (base_per_stock + unit)
-  const { data: stocks, error: stockErr } = await supabase
-    .from('current_stock')
-    .select('article_id, base_per_stock, unit')
-    .in('article_id', articleIds)
-
-  if (stockErr) throw stockErr
-
-  const stockMap = new Map(
-    (stocks ?? []).map((s: { article_id: string; base_per_stock: number; unit: string }) =>
-      [s.article_id, s]
-    )
-  )
-
-  // 3. Buscar base_per_order_unit do fornecedor preferido
-  const { data: suppliers, error: suppErr } = await supabase
-    .from('article_suppliers')
-    .select('article_id, base_per_order_unit, conversion_factor')
-    .in('article_id', articleIds)
-    .eq('is_preferred', true)
-
-  if (suppErr) throw suppErr
-
-  const supplierMap = new Map(
-    (suppliers ?? []).map((s: { article_id: string; base_per_order_unit: number | null; conversion_factor: number }) =>
-      [s.article_id, s]
-    )
-  )
-
-  // 4. Criar movimentos de stock tipo PURCHASE
-  const now = new Date().toISOString()
-  const movements = (items as Array<{ id: string; article_id: string; quantity_ordered: number; order_unit: string }>)
-    .map(item => {
-      const stock    = stockMap.get(item.article_id)
-      const supplier = supplierMap.get(item.article_id)
-      const basePerOrderUnit =
-        supplier?.base_per_order_unit ??
-        (supplier?.conversion_factor ?? 1) * (stock?.base_per_stock ?? 1)
-      return {
-        article_id:    item.article_id,
-        type:          'PURCHASE' as const,
-        quantity:      item.quantity_ordered * basePerOrderUnit,
-        unit:          stock?.unit ?? 'un',
-        notes:         `Receção de encomenda`,
-        order_item_id: item.id,
-        counted_at:    now,
-      }
-    })
-
-  const { error: mvErr } = await supabase.from('stock_movements').insert(movements)
-  if (mvErr) throw mvErr
-
-  // 5. Marcar itens como recebidos
-  const itemIds = (items as Array<{ id: string }>).map(i => i.id)
-  const { error: updateItemsErr } = await supabase
-    .from('order_items')
-    .update({ received_at: now })
-    .in('id', itemIds)
-
-  if (updateItemsErr) throw updateItemsErr
-
-  // 6. Atualizar status da encomenda
-  await updateOrderStatus(orderId, 'RECEIVED')
+  const { error } = await supabase.rpc('receive_order', { p_order_id: orderId })
+  if (error) throw error
 }
 
 // ── Articles (para selectors) ────────────────────────────────
@@ -383,7 +214,6 @@ export async function fetchProductionDetail(id: string): Promise<ProductionDetai
 
   if (prodRes.error) throw prodRes.error
 
-  // Build article price map for cost-per-line calc
   const articleIds = (ingRes.data ?? [])
     .filter((i: { article_id: string | null }) => i.article_id)
     .map((i: { article_id: string }) => i.article_id)
@@ -392,14 +222,11 @@ export async function fetchProductionDetail(id: string): Promise<ProductionDetai
   if (articleIds.length > 0) {
     const { data: suppliers } = await supabase
       .from('article_suppliers')
-      .select('article_id, price, conversion_factor, base_per_order_unit')
+      .select('article_id, price, conversion_factor')
       .in('article_id', articleIds)
       .eq('is_preferred', true)
-    ;(suppliers ?? []).forEach((s: { article_id: string; price: number; conversion_factor: number; base_per_order_unit: number | null }) => {
-      // custo por base_unit = price / base_per_order_unit (se configurado)
-      // fallback: price / conversion_factor (comportamento anterior)
-      const divisor = s.base_per_order_unit ?? s.conversion_factor
-      priceMap.set(s.article_id, divisor > 0 ? s.price / divisor : 0)
+    ;(suppliers ?? []).forEach((s: { article_id: string; price: number; conversion_factor: number }) => {
+      priceMap.set(s.article_id, s.conversion_factor > 0 ? s.price / s.conversion_factor : 0)
     })
   }
 
@@ -520,7 +347,6 @@ export async function updateProduction(id: string, input: ProductionInput): Prom
 
   if (prodErr) throw prodErr
 
-  // Replace all ingredients
   const { error: delErr } = await supabase
     .from('production_ingredients')
     .delete()
@@ -566,7 +392,6 @@ export async function saveProductionCount(
 
 // ── Unit Conversions ──────────────────────────────────────────
 
-// Cache in module scope — loaded once per page session
 let _conversionCache: Map<string, Map<string, number>> | null = null
 
 export async function fetchUnitConversions(): Promise<Map<string, Map<string, number>>> {
@@ -588,7 +413,6 @@ export async function fetchUnitConversions(): Promise<Map<string, Map<string, nu
   return map
 }
 
-/** Convert qty from fromUnit to toUnit. Returns null if no conversion exists. */
 export function convertUnit(
   qty:         number,
   fromUnit:    string,
@@ -613,20 +437,18 @@ export async function fetchAllArticles(): Promise<Article[]> {
 }
 
 export async function createArticle(input: {
-  name:        string
-  unit:        string
-  stock_unit?: string | null
-  par_level:   number
-  category?:   string
+  name:      string
+  unit:      string
+  par_level: number
+  category?: string
 }): Promise<Article> {
   const { data, error } = await supabase
     .from('articles')
     .insert({
-      name:       input.name,
-      unit:       input.unit,
-      stock_unit: input.stock_unit ?? null,
-      par_level:  input.par_level,
-      category:   input.category ?? null,
+      name:      input.name,
+      unit:      input.unit,
+      par_level: input.par_level,
+      category:  input.category ?? null,
     })
     .select()
     .single()
@@ -635,18 +457,16 @@ export async function createArticle(input: {
 }
 
 export async function updateArticle(id: string, input: {
-  name:        string
-  unit:        string
-  stock_unit?: string | null
-  par_level:   number
-  category?:   string
+  name:      string
+  unit:      string
+  par_level: number
+  category?: string
 }): Promise<void> {
   const { error } = await supabase
     .from('articles')
     .update({
       name:       input.name,
       unit:       input.unit,
-      stock_unit: input.stock_unit ?? null,
       par_level:  input.par_level,
       category:   input.category ?? null,
       updated_at: new Date().toISOString(),
@@ -681,13 +501,12 @@ export async function fetchArticleSuppliers(
 export async function saveArticleSuppliers(
   articleId: string,
   links: Array<{
-    supplier_id:          string
-    supplier_ref?:        string | null
-    price:                number
-    order_unit:           string
-    conversion_factor:    number
-    base_per_order_unit?: number | null
-    is_preferred:         boolean
+    supplier_id:       string
+    supplier_ref?:     string | null
+    price:             number
+    order_unit:        string
+    conversion_factor: number
+    is_preferred:      boolean
   }>,
 ): Promise<void> {
   const { error: delErr } = await supabase
@@ -700,14 +519,13 @@ export async function saveArticleSuppliers(
     const { error: insErr } = await supabase
       .from('article_suppliers')
       .insert(links.map(l => ({
-        article_id:          articleId,
-        supplier_id:         l.supplier_id,
-        supplier_ref:        l.supplier_ref ?? null,
-        price:               l.price,
-        order_unit:          l.order_unit,
-        conversion_factor:   l.conversion_factor,
-        base_per_order_unit: l.base_per_order_unit ?? null,
-        is_preferred:        l.is_preferred,
+        article_id:        articleId,
+        supplier_id:       l.supplier_id,
+        supplier_ref:      l.supplier_ref ?? null,
+        price:             l.price,
+        order_unit:        l.order_unit,
+        conversion_factor: l.conversion_factor,
+        is_preferred:      l.is_preferred,
       })))
     if (insErr) throw insErr
   }

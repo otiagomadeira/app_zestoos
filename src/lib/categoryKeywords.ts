@@ -1,165 +1,318 @@
 /**
- * Sistema de sugestão de categoria baseado em palavras-chave.
+ * Sistema de sugestão de categoria e unidade base.
  *
- * Lógica em duas camadas:
- *   1. Override forte: palavras de formato/conservação (lata, congelado, etc.)
- *      ganham sempre, independentemente do ingrediente.
- *   2. Ingrediente base: se não houver override, identifica pela palavra do produto.
+ * Categorias: Carnes | Peixe e Marisco | Frutas e Legumes |
+ *             Lacticínios e Ovos | Mercearia | Congelados | Bebidas |
+ *             Embalagens e Descartáveis
  *
- * Nota: "saco", "pacote" e "embalagem" são neutros — não determinam categoria,
- * porque rúcula também vem em saco mas é Legume, não Seco.
+ * Prioridade de correspondência:
+ *   1. Formato congelado (congelado, iqf) → Congelados
+ *   2. Bebidas (keywords específicas) — antes de container words para evitar
+ *      "Cerveja em lata" → Mercearia
+ *   3. Container words (lata, conserva, pelado, frasco…) → Mercearia
+ *   4. Keywords de ingrediente (Carnes, Peixe, Frutas, Lacticínios, Mercearia, Embalagens)
+ *   5. Fallback por unidade líquida (mL) → Bebidas, confident=false
+ *   6. null, confident=false
  */
 
-// ── Overrides fortes ──────────────────────────────────────────────────────────
-// Palavra encontrada no nome → categoria, independentemente do ingrediente
+// ── Overrides de formato: congelados ─────────────────────────────────────────
 
-const FORMAT_OVERRIDES: Array<{ words: string[]; category: string }> = [
-  {
-    words: ['lata', 'enlatado', 'enlatada', 'pelado', 'pelada', 'conserva', 'conservas', 'frasco'],
-    category: 'Conservas',
-  },
-  {
-    words: ['congelado', 'congelada', 'congelados', 'congeladas', 'iqf'],
-    category: 'Congelados',
-  },
+const FROZEN_WORDS = [
+  'congelado', 'congelada', 'congelados', 'congeladas', 'iqf',
+  'ultracongelado', 'ultracongelada',
+]
+
+// ── Container/formato: indica produto processado → Mercearia ─────────────────
+// Não inclui saco/caixa/pacote/embalagem (neutros para categoria)
+
+const CONTAINER_WORDS = [
+  'lata', 'latas',
+  'frasco', 'frascos',
+  'conserva', 'conservas',
+  'enlatado', 'enlatada', 'enlatados', 'enlatadas',
+  'pelado', 'pelada', 'pelados', 'peladas',
+  'bisnaga',
 ]
 
 // ── Ingrediente base ──────────────────────────────────────────────────────────
-// Ordem importa: mais específico primeiro
 
 const INGREDIENT_KEYWORDS: Array<{ words: string[]; category: string }> = [
   {
+    category: 'Bebidas',
     words: [
-      'frango', 'peru', 'pato', 'codorniz', 'carne', 'vitela', 'borrego', 'cordeiro',
-      'porco', 'vaca', 'novilho', 'entrecosto', 'costeleta', 'lombo', 'lombinho',
-      'presunto', 'bacon', 'pancetta', 'chouriço', 'linguiça', 'morcela', 'salsicha',
-      'hamburguer', 'almôndega', 'picada', 'bifes', 'peito', 'coxa', 'asa',
-      'perna', 'rabo', 'tripas', 'fígado', 'rim', 'coração', 'língua',
+      'água', 'agua', 'sumo', 'néctar', 'nectar', 'refrigerante',
+      'cerveja', 'vinho', 'vinho tinto', 'vinho branco', 'vinho verde',
+      'espumante', 'prosecco', 'cava', 'champagne', 'champanhe',
+      'licor', 'aguardente', 'brandy', 'cognac', 'whisky', 'whiskey',
+      'bourbon', 'gin', 'vodka', 'rum', 'tequila', 'cachaça',
+      'porto', 'madeira', 'moscatel', 'jerez', 'sangria',
+      'tónica', 'tonica', 'soda', 'coca-cola', 'coca cola', 'pepsi',
+      'laranjada', 'limonada', 'ice tea', 'kombucha', 'kefir de água',
+      'leite de coco', 'bebida vegetal', 'bebida de aveia', 'bebida de soja',
     ],
+  },
+  {
     category: 'Carnes',
-  },
-  {
     words: [
-      'peixe', 'atum', 'salmão', 'bacalhau', 'dourada', 'robalo', 'pregado',
-      'solha', 'linguado', 'sardinha', 'sardinhas', 'carapau', 'corvina',
-      'camarão', 'gambas', 'lagosta', 'lavagante', 'sapateira', 'caranguejo',
-      'lula', 'choco', 'polvo', 'amêijoa', 'mexilhão', 'berbigão', 'ostras',
-      'mariscos', 'marisco',
+      // Bovino
+      'vaca', 'novilho', 'vitela', 'bife', 'bifes', 'entrecosto', 'costeleta',
+      'lombo', 'lombinho', 'pojadouro', 'alcatra', 'chambão', 'rabadilha',
+      'ossobuco', 'músculo', 'cachaço', 'carne picada', 'hamburguer',
+      // Suíno
+      'porco', 'leitão', 'presunto', 'bacon', 'pancetta', 'chouriço',
+      'linguiça', 'morcela', 'farinheira', 'salsicha', 'salpicão',
+      'paio', 'pá de porco', 'pernil', 'entrecosto de porco',
+      // Borrego / Cabrito
+      'borrego', 'cordeiro', 'cabrito', 'cabra',
+      // Aves
+      'frango', 'peru', 'pato', 'codorniz', 'faisão', 'pombo', 'galinha',
+      'peito de frango', 'coxa de frango', 'asa de frango', 'coelho',
+      // Caça
+      'veado', 'javali', 'perdiz', 'lebre',
+      // Miudezas
+      'fígado', 'rim', 'coração', 'língua', 'tripas', 'miolos', 'rabo',
+      'tutano', 'pata', 'chispe',
+      // Enchidos genérico (sem 'fumado' — palavra ambígua que afeta Salmão fumado etc.)
+      'enchido', 'charcutaria',
     ],
-    category: 'Peixes e Mariscos',
   },
   {
+    category: 'Peixe e Marisco',
     words: [
-      'leite', 'natas', 'manteiga', 'queijo', 'iogurte', 'requeijão',
-      'mozzarella', 'mozarela', 'brie', 'camembert', 'parmesão', 'parmesan',
-      'ricotta', 'mascarpone', 'creme fraîche', 'crème fraîche',
-      'gorgonzola', 'emmental', 'gruyère', 'cheddar',
+      // Peixe
+      'bacalhau', 'salmão', 'salmon', 'dourada', 'robalo', 'pregado',
+      'solha', 'linguado', 'sardinha', 'carapau', 'corvina', 'atum',
+      'espadarte', 'peixe-espada', 'ruivo', 'salmonete', 'garoupa',
+      'faneca', 'pargo', 'cherne', 'tamboril', 'raia', 'skrei',
+      'truta', 'enguia', 'lampreia', 'anchova', 'arenque',
+      // Marisco
+      'camarão', 'gambas', 'lagosta', 'lavagante', 'sapateira',
+      'caranguejo', 'santola', 'navalheira', 'percebes',
+      // Moluscos
+      'lula', 'choco', 'polvo', 'amêijoa', 'mexilhão', 'berbigão',
+      'longueirão', 'ostra', 'ostras', 'vieira', 'búzio',
+      // Genérico
+      'peixe', 'marisco', 'mariscos', 'crustáceo',
     ],
-    category: 'Lacticínios',
   },
   {
+    category: 'Frutas e Legumes',
     words: [
-      'ovo', 'ovos',
-    ],
-    category: 'Ovos',
-  },
-  {
-    words: [
-      'tomate', 'cebola', 'alho', 'pimento', 'cenoura', 'batata', 'couve',
-      'brócolos', 'brocolis', 'espinafres', 'espinafre', 'alface', 'rúcula',
-      'rucula', 'pepino', 'abobrinha', 'beringela', 'ervilhas', 'ervilha',
-      'feijão verde', 'cogumelos', 'cogumelo', 'champignon', 'curgete',
-      'courgette', 'nabo', 'aipo', 'alho-francês', 'alho francês', 'funcho',
-      'agrião', 'rabanete', 'beterraba', 'abóbora', 'milho', 'couve-flor',
-      'couve flor', 'repolho', 'pak choi', 'alcachofra', 'espargos',
-    ],
-    category: 'Legumes',
-  },
-  {
-    words: [
+      // Legumes / vegetais
+      'tomate', 'cebola', 'alho', 'pimento', 'cenoura', 'batata',
+      'batata-doce', 'couve', 'brócolos', 'espinafres', 'espinafre',
+      'alface', 'rúcula', 'rucula', 'pepino', 'beringela', 'ervilha',
+      'ervilhas', 'feijão verde', 'cogumelo', 'cogumelos', 'champignon',
+      'portobello', 'shiitake', 'curgete', 'courgette', 'nabo', 'aipo',
+      'alho-francês', 'alho francês', 'funcho', 'agrião', 'rabanete',
+      'beterraba', 'abóbora', 'milho', 'couve-flor', 'couve flor',
+      'repolho', 'pak choi', 'alcachofra', 'espargo', 'espargos',
+      'chicória', 'endívia', 'acelga', 'grão-de-bico', 'salsify',
+      'topinambur', 'nori', 'alga', 'algas', 'trufas', 'trufa',
+      'erva', 'ervas', 'salsa', 'coentros', 'coentro', 'manjericão',
+      'manjericao', 'tomilho', 'rosmaninho', 'louro', 'estragão',
+      'cebolinho', 'hortelã', 'hortelã-pimenta', 'oregãos', 'oregaos',
+      'segurelha', 'lúcio', 'lúcia-lima',
+      // Frutas
       'maçã', 'maca', 'pera', 'banana', 'laranja', 'limão', 'limao',
-      'morango', 'morangos', 'framboesa', 'mirtilo', 'manga', 'ananás',
-      'ananas', 'uva', 'uvas', 'melão', 'melon', 'melancia', 'kiwi',
-      'abacaxi', 'papaia', 'pêssego', 'pessego', 'ameixa', 'cereja',
-      'figo', 'romã', 'maracujá', 'coco', 'abacate',
+      'lima', 'toranja', 'pomelo', 'clementina', 'tangerina', 'mandarina',
+      'morango', 'morangos', 'framboesa', 'mirtilo', 'amora',
+      'groselha', 'manga', 'ananás', 'ananas', 'uva', 'uvas',
+      'melão', 'melancia', 'kiwi', 'abacaxi', 'papaia', 'pêssego',
+      'pessego', 'nectarina', 'ameixa', 'cereja', 'figo', 'romã',
+      'maracujá', 'coco', 'abacate', 'dióspiro', 'marmelo', 'nêspera',
+      'lichia', 'rambutan', 'pitaia', 'fruta da paixão',
     ],
-    category: 'Frutas',
   },
   {
+    category: 'Lacticínios e Ovos',
     words: [
-      'farinha', 'arroz', 'massa', 'esparguete', 'spaghetti', 'penne',
-      'fusilli', 'lasanha', 'feijão', 'grão', 'lentilhas', 'lentilha',
-      'quinoa', 'cuscuz', 'bulgur', 'aveia', 'açúcar', 'acucar',
-      'sal', 'bicarbonato', 'amido', 'pão ralado', 'pao ralado',
-      'sêmola', 'semola', 'polenta', 'tapioca', 'maizena',
+      // Lacticínios
+      'leite', 'natas', 'manteiga', 'queijo', 'iogurte', 'iogurte grego',
+      'requeijão', 'mozzarella', 'mozarela', 'burrata', 'brie',
+      'camembert', 'parmesão', 'parmesan', 'parmigiano', 'ricotta',
+      'mascarpone', 'creme fraiche', 'crème fraîche', 'gorgonzola',
+      'emmental', 'gruyère', 'gruyere', 'cheddar', 'gouda', 'edam',
+      'roquefort', 'stilton', 'manchego', 'pecorino', 'provolone',
+      'halloumi', 'feta', 'cottage', 'kefir', 'buttermilk',
+      'soro de leite', 'whey', 'creme de leite',
+      // Ovos
+      'ovo', 'ovos', 'clara', 'gema',
     ],
-    category: 'Secos',
   },
   {
+    category: 'Mercearia',
     words: [
+      // Farinhas e amidos
+      'farinha', 'amido', 'fécula', 'maizena', 'polvilho', 'sêmola',
+      'semola', 'polenta', 'tapioca', 'farelo', 'pão ralado', 'pao ralado',
+      // Cereais e massas
+      'arroz', 'massa', 'esparguete', 'spaghetti', 'penne', 'fusilli',
+      'lasanha', 'tagliatelle', 'rigatoni', 'macarrão', 'orzo', 'cuscuz',
+      'bulgur', 'quinoa', 'aveia', 'millet', 'espelta', 'trigo',
+      // Leguminosas
+      'feijão', 'grão', 'lentilha', 'lentilhas', 'ervilha seca',
+      'fava', 'favas', 'soja', 'edamame',
+      // Açúcares e adoçantes
+      'açúcar', 'acucar', 'mel', 'melaço', 'melaco', 'xarope',
+      'agave', 'stevia', 'mascavado', 'demerara', 'glaçúcar', 'glucose',
+      'frutose', 'lactose', 'dextrose',
+      // Óleos e gorduras
+      'azeite', 'óleo', 'oleo', 'banha', 'margarina', 'ghee',
+      // Vinagres e acidificantes
+      'vinagre', 'sumo de limão', 'ácido cítrico',
+      // Molhos e condimentos
+      'ketchup', 'maionese', 'mostarda', 'molho', 'tabasco', 'sriracha',
+      'worcestershire', 'miso', 'tahini', 'harissa', 'pesto',
+      'concentrado de tomate', 'passata', 'polpa de tomate',
+      // Conservas e enlatados (keywords de produto, não de formato)
+      'anchova em lata', 'atum em lata',
+      // Especiarias e sal
+      'sal', 'flor de sal', 'pimenta', 'paprika', 'cominhos', 'curcuma',
+      'cúrcuma', 'canela', 'noz-moscada', 'noz moscada', 'cardamomo',
+      'cravinho', 'anis', 'feno-grego', 'za\'atar',
+      'ras el hanout', 'curry', 'garam masala', 'açafrão', 'acafrao',
+      'baunilha', 'gengibre', 'alho em pó', 'alho em po', 'cebola em pó',
+      'piri-piri', 'malagueta', 'cayenne', 'fumaça líquida',
+      // Fermentos e leveduras
+      'fermento', 'levedura', 'bicarbonato', 'cremor tártaro',
+      // Gelatinas e espessantes
+      'gelatina', 'agar', 'agar-agar', 'pectina', 'carragenina',
+      'xantana', 'lecitina', 'metilcelulose',
+      // Padaria e pastelaria
       'pão', 'pao', 'broa', 'brioche', 'croissant', 'baguette', 'baguete',
       'ciabatta', 'focaccia', 'tortilla', 'wrap', 'pita', 'naan',
-      'bolo', 'tarte', 'pastel', 'queque', 'muffin',
+      'bolacha', 'biscoito', 'crackers',
+      // Frutos secos e sementes
+      'amêndoa', 'amendoa', 'noz', 'nozes', 'avelã', 'avela',
+      'pistáchio', 'pistachio', 'pinhão', 'pinhao', 'castanha',
+      'cajú', 'caju', 'amendoim', 'sésamo', 'sesamo', 'linhaça',
+      'chia', 'girassol', 'abóbora semente', 'cânhamo',
+      // Chocolate e cacau
+      'chocolate', 'cacau', 'cacao', 'massa de cacau', 'manteiga de cacau',
+      // Café e chá
+      'café', 'cafe', 'chá', 'cha', 'matcha', 'rooibos',
+      // Outros mercearia
+      'caldo', 'stock', 'extrato', 'extracto', 'dashi', 'kombu',
     ],
-    category: 'Padaria',
   },
   {
+    category: 'Embalagens e Descartáveis',
     words: [
-      'azeite', 'óleo', 'oleo', 'vinagre', 'molho', 'ketchup',
-      'maionese', 'mostarda', 'soja', 'tabasco', 'sriracha', 'worcestershire',
-      'pimenta', 'paprika', 'cominhos', 'orégãos', 'oregaos', 'tomilho',
-      'rosmaninho', 'louro', 'manjericão', 'manjericao', 'coentros', 'coentro',
-      'salsa', 'açafrão', 'acafrao', 'curcuma', 'cúrcuma', 'canela',
-      'noz-moscada', 'noz moscada', 'baunilha', 'ervas', 'especiarias',
-      'flor de sal', 'alho em pó', 'alho em po',
+      'papel', 'película', 'película aderente', 'alumínio', 'foil',
+      'manga pasteleiro', 'manga pasteleira', 'luvas', 'luva',
+      'touca', 'toucas', 'avental', 'aventais', 'guardanapo', 'guardanapos',
+      'palito', 'palitos', 'espeto', 'espetos', 'copos descartáveis',
+      'pratos descartáveis', 'talheres descartáveis', 'cuvete', 'cuvetes',
+      'marmita', 'marmitas', 'take away', 'takeaway', 'delivery',
+      'vácuo', 'vacuum', 'sous vide', 'termómetro', 'papel vegetal',
+      'papel manteiga', 'papel de forno', 'cartão', 'etiqueta', 'etiquetas',
+      'rótulo', 'rótulos', 'fita', 'clips', 'elástico', 'fio de cozinha',
     ],
-    category: 'Condimentos',
-  },
-  {
-    words: [
-      'água', 'agua', 'sumo', 'refrigerante', 'cerveja', 'vinho', 'espumante',
-      'prosecco', 'cava', 'champagne', 'licor', 'whisky', 'gin', 'vodka',
-      'rum', 'tónica', 'tonica', 'coca-cola', 'coca cola', 'laranjada',
-      'limonada', 'ice tea', 'chá', 'cha', 'café', 'cafe', 'kombucha',
-    ],
-    category: 'Bebidas',
   },
 ]
 
-// ── Função principal ──────────────────────────────────────────────────────────
+// ── Lista canónica de categorias ─────────────────────────────────────────────
 
-/**
- * Sugere uma categoria com base no nome do produto e unidade.
- * Retorna null se não houver sugestão confiante.
- *
- * Camada 1 — override de formato (lata/frasco → Conservas, congelado → Congelados)
- * Camada 2 — palavras do ingrediente
- * Camada 3 — unidade (L/cl/dl sem alimento identificado → Bebidas)
- */
-export function suggestCategory(name: string, unit?: string): string | null {
-  const lower = name.toLowerCase()
+export const ARTICLE_CATEGORIES = [
+  'Carnes',
+  'Peixe e Marisco',
+  'Frutas e Legumes',
+  'Lacticínios e Ovos',
+  'Mercearia',
+  'Congelados',
+  'Bebidas',
+  'Embalagens e Descartáveis',
+] as const
 
-  // Camada 1: overrides de formato
-  for (const override of FORMAT_OVERRIDES) {
-    if (override.words.some(w => lower.includes(w))) {
-      return override.category
-    }
+// ── Tipo de resultado ─────────────────────────────────────────────────────────
+
+export type CategoryResult = {
+  category: string | null
+  confident: boolean
+  reason?: string
+}
+
+// ── suggestCategory ───────────────────────────────────────────────────────────
+
+export function suggestCategory(ctx: {
+  name: string
+  unit?: string
+  label?: string
+  raw?: string
+}): CategoryResult {
+  const { name, unit, label, raw } = ctx
+  const lower    = name.toLowerCase()
+  const lowerRaw = (raw ?? name).toLowerCase()
+
+  // 1. Formato congelado (incondicional)
+  if (FROZEN_WORDS.some(w => lowerRaw.includes(w) || lower.includes(w))) {
+    return { category: 'Congelados', confident: true, reason: 'frozen-format' }
   }
 
-  // Camada 2: ingrediente base
+  // 2. Bebidas por keyword de ingrediente (antes de container words para não
+  //    reclassificar "Cerveja em lata" como Mercearia)
+  const bebidasGroup = INGREDIENT_KEYWORDS.find(g => g.category === 'Bebidas')!
+  if (bebidasGroup.words.some(w => lower.includes(w))) {
+    return { category: 'Bebidas', confident: true, reason: 'ingredient-keyword' }
+  }
+
+  // 3. Container words → Mercearia (lata, conserva, pelado, frasco…)
+  const lowerLabel = (label ?? '').toLowerCase()
+  if (CONTAINER_WORDS.some(w => lowerRaw.includes(w) || lowerLabel === w)) {
+    return { category: 'Mercearia', confident: true, reason: 'container-format' }
+  }
+
+  // 4. Keywords de ingrediente (todos os grupos excepto Bebidas, já verificado)
   for (const group of INGREDIENT_KEYWORDS) {
+    if (group.category === 'Bebidas') continue
     if (group.words.some(w => lower.includes(w))) {
-      return group.category
+      return { category: group.category, confident: true, reason: 'ingredient-keyword' }
     }
   }
 
-  // Camada 3: unidade de volume sem alimento identificado → Bebidas
+  // 5. Fallback por unidade líquida
   if (unit) {
     const u = unit.toLowerCase()
     if (['l', 'cl', 'dl', 'ml'].includes(u)) {
-      return 'Bebidas'
+      return { category: 'Bebidas', confident: false, reason: 'unit-fallback' }
     }
   }
 
+  return { category: null, confident: false }
+}
+
+// ── suggestUnit ───────────────────────────────────────────────────────────────
+
+const UNIT_ML_WORDS = [
+  'leite', 'natas', 'creme de leite', 'kefir', 'buttermilk',
+  'sumo', 'néctar', 'nectar', 'água', 'agua', 'refrigerante',
+  'cerveja', 'vinho', 'espumante', 'prosecco', 'champagne', 'champanhe',
+  'licor', 'aguardente', 'brandy', 'cognac', 'whisky', 'whiskey',
+  'bourbon', 'gin', 'vodka', 'rum', 'tequila', 'cachaça',
+  'porto', 'moscatel', 'sangria', 'tónica', 'tonica', 'soda',
+  'laranjada', 'limonada', 'kombucha',
+  'azeite', 'óleo', 'oleo', 'vinagre', 'caldo', 'stock',
+  'molho soja', 'tabasco', 'sriracha', 'worcestershire',
+  'extrato', 'extracto', 'fumaça líquida',
+]
+
+const UNIT_UN_WORDS = [
+  'ovo', 'ovos', 'clara', 'gema',
+  'pão', 'pao', 'broa', 'brioche', 'croissant', 'baguette', 'baguete',
+  'laranja', 'limão', 'limao', 'lima', 'toranja', 'pomelo',
+  'clementina', 'tangerina', 'mandarina', 'maçã', 'maca', 'pera',
+  'banana', 'kiwi', 'manga', 'abacate', 'coco', 'romã', 'maracujá',
+  'dióspiro', 'marmelo', 'nêspera', 'pêssego', 'pessego',
+  'nectarina', 'ameixa', 'figo',
+  'trufa', 'trufas',
+  'dose', 'porção',
+]
+
+export function suggestUnit(name: string): 'g' | 'mL' | 'un' | null {
+  const lower = name.toLowerCase()
+  if (UNIT_ML_WORDS.some(w => lower.includes(w))) return 'mL'
+  if (UNIT_UN_WORDS.some(w => lower.includes(w))) return 'un'
+  if (lower.trim().length > 0) return 'g'
   return null
 }

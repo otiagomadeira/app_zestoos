@@ -38,9 +38,8 @@ export interface Supplier {
 export interface Article {
   id:          string
   name:        string
-  unit:        string        // base_unit: g, mL, un — para receitas
-  stock_unit:  string | null // unidade de contagem; null = igual a unit
-  par_level:   number        // em stock_unit (ou base_unit se stock_unit=null)
+  unit:        string        // base_unit: g, mL, un
+  par_level:   number        // em base_unit
   category:    string | null
   is_active:   boolean
   created_at:  string
@@ -48,17 +47,16 @@ export interface Article {
 }
 
 export interface ArticleSupplier {
-  id:                  string
-  article_id:          string
-  supplier_id:         string
-  supplier_ref:        string | null
-  price:               number
-  order_unit:          string
-  conversion_factor:   number        // stock_units por order_unit
-  base_per_order_unit: number | null // base_units por order_unit; null = não configurado
-  is_preferred:        boolean
-  created_at:          string
-  updated_at:          string
+  id:                string
+  article_id:        string
+  supplier_id:       string
+  supplier_ref:      string | null
+  price:             number
+  order_unit:        string
+  conversion_factor: number        // base_units por order_unit
+  is_preferred:      boolean
+  created_at:        string
+  updated_at:        string
 }
 
 export interface Order {
@@ -101,33 +99,29 @@ export interface StockMovement {
 // ── Views ────────────────────────────────────────────────────
 
 export interface CurrentStock {
-  article_id:       string
-  name:             string
-  unit:             string        // base_unit
-  stock_unit:       string        // COALESCE(stock_unit, unit)
-  par_level:        number        // em stock_unit
-  category:         string | null
-  base_per_stock:   number        // base_units por stock_unit (derivado do fornecedor)
-  current_qty_base: number        // soma dos movements em base_unit (para saveStockCount)
-  current_qty:      number        // em stock_unit (para display)
-  diff_from_par:    number        // em stock_unit
+  article_id:  string
+  name:        string
+  unit:        string        // base_unit (= stock_unit após simplificação)
+  stock_unit:  string        // sempre igual a unit
+  par_level:   number        // em base_unit
+  category:    string | null
+  current_qty: number        // soma dos movimentos em base_unit
+  diff_from_par: number      // current_qty - par_level
 }
 
 export interface OrderSuggestion {
   article_id:              string
   name:                    string
-  unit:                    string        // base_unit
-  stock_unit:              string        // unidade de contagem
-  par_level:               number        // em stock_unit
-  current_qty:             number        // em stock_unit
-  diff_from_par:           number        // em stock_unit
-  qty_to_order:            number        // em stock_unit
+  unit:                    string
+  par_level:               number
+  current_qty:             number
+  diff_from_par:           number
+  qty_to_order:            number
   supplier_id:             string | null
   supplier_name:           string | null
   order_unit:              string | null
   price:                   number | null
-  conversion_factor:       number | null // stock_units por order_unit
-  base_per_order_unit:     number | null // base_units por order_unit
+  conversion_factor:       number | null  // base_units por order_unit
   order_qty_in_order_unit: number | null
 }
 
@@ -167,7 +161,6 @@ export interface ProductionStock {
   created_at:    string
 }
 
-// View: última contagem por produção
 export interface CurrentProductionStock {
   production_id: string
   name:          string
@@ -177,7 +170,6 @@ export interface CurrentProductionStock {
   counted_at:    string | null
 }
 
-// View: custo calculado por produção
 export interface ProductionWithCost {
   production_id: string
   name:          string
@@ -187,46 +179,16 @@ export interface ProductionWithCost {
   cost_per_unit: number
 }
 
-// Ingrediente enriquecido para UI (join com artigo/sub-produção)
 export interface IngredientDetail extends ProductionIngredient {
   article_name?:        string
   sub_production_name?: string
-  unit_cost?:           number  // custo por unidade base do ingrediente
-  line_cost?:           number  // (quantity / yield_factor) * unit_cost
+  unit_cost?:           number
+  line_cost?:           number
 }
 
-// Produção completa com ingredientes e custo (para painel de detalhe)
 export interface ProductionDetail extends Production {
   ingredients:   IngredientDetail[]
   total_cost:    number
   cost_per_unit: number
   current_qty:   number
-}
-
-// ── Stock Count Lines ────────────────────────────────────────
-
-export interface StockCountLine {
-  id:             string
-  movement_id:    string
-  organization_id: string
-  size_label:     string   // ex: "saco 200g" (legível)
-  qty:            number   // nº de unidades deste tamanho
-  base_per_unit:  number   // base_units por unidade
-  base_qty:       number   // = qty × base_per_unit
-  created_at:     string
-}
-
-// ── UI Helpers ───────────────────────────────────────────────
-
-export interface StockCountEntry {
-  article_id:       string
-  name:             string
-  unit:             string   // base_unit
-  stock_unit:       string   // unidade de contagem (display)
-  par_level:        number   // em stock_unit
-  base_per_stock:   number   // base_units por stock_unit
-  current_qty_base: number   // em base_unit (para delta)
-  current_qty:      number   // em stock_unit (display inicial)
-  new_qty:          string   // valor a digitar no keypad (em stock_unit)
-  dirty:            boolean  // utilizador tocou neste artigo?
 }

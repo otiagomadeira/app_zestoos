@@ -2,35 +2,29 @@
 
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import type { CurrentStock } from '@/types/database'
-import { fetchCurrentStock, fetchAllArticleSizes, saveStockCount } from '@/lib/supabase'
-import type { ArticleSize } from '@/lib/supabase'
+import { fetchCurrentStock, saveStockCount } from '@/lib/supabase'
 import ArticleCard from './ArticleCard'
-import type { SizeRow } from './ArticleCard'
 
-type DirtyMap   = Record<string, string>           // simple mode: articleId → qty string
-type SizeRowMap = Record<string, SizeRow[]>        // multi-size mode: articleId → rows
+type DirtyMap = Record<string, string> // articleId → qty string
 
 export default function InventoryScreen() {
-  const [articles,    setArticles]    = useState<CurrentStock[]>([])
-  const [loading,     setLoading]     = useState(true)
-  const [error,       setError]       = useState<string | null>(null)
-  const [selectedId,  setSelectedId]  = useState<string | null>(null)
-  const [dirty,       setDirty]       = useState<DirtyMap>({})
-  const [sizeRowMap,  setSizeRowMap]  = useState<SizeRowMap>({})
-  const [savingId,      setSavingId]      = useState<string | null>(null)
+  const [articles,   setArticles]   = useState<CurrentStock[]>([])
+  const [loading,    setLoading]    = useState(true)
+  const [error,      setError]      = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [dirty,      setDirty]      = useState<DirtyMap>({})
+  const [savingId,   setSavingId]   = useState<string | null>(null)
   const [countedThisSession, setCountedThisSession] = useState<Set<string>>(new Set())
-  const [search,        setSearch]        = useState('')
-  const [saveSuccess,   setSaveSuccess]   = useState<string | null>(null)
-  const [saveNoChange,  setSaveNoChange]  = useState<string | null>(null)
-  const [articleSizes, setArticleSizes] = useState<Map<string, ArticleSize[]>>(new Map())
+  const [search,      setSearch]      = useState('')
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
+  const [saveNoChange, setSaveNoChange] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const [data, sizes] = await Promise.all([fetchCurrentStock(), fetchAllArticleSizes()])
+      const data = await fetchCurrentStock()
       setArticles(data)
-      setArticleSizes(sizes)
     } catch (e: unknown) {
       setError((e as Error).message ?? 'Erro ao carregar inventário')
     } finally {
@@ -61,133 +55,40 @@ export default function InventoryScreen() {
     ]
   }, [filtered, countedThisSession])
 
-  /** Constrói SizeRow[] com label de display para um artigo */
-  function buildSizeRows(_article: CurrentStock, rawSizes: ArticleSize[]): SizeRow[] {
-    return rawSizes.map(s => ({
-      size_label:    s.label,
-      qty:           '0',
-      base_per_unit: s.base_per_unit,
-    }))
-  }
-
   const handleSelect = (id: string) => {
-    if (selectedId === id) {
-      setSelectedId(null)
-      return
-    }
-    setSelectedId(id)
-    const art    = articles.find(a => a.article_id === id)
-    const sizes  = articleSizes.get(id) ?? []
-
-    if (sizes.length > 0) {
-      // Modo multi-tamanho: inicializar rows se ainda não existem
-      if (!sizeRowMap[id]) {
-        setSizeRowMap(prev => ({ ...prev, [id]: buildSizeRows(art!, sizes) }))
-      }
-    }
+    setSelectedId(prev => prev === id ? null : id)
   }
 
   const handleQtyChange = (id: string, val: string) => {
     setDirty(prev => ({ ...prev, [id]: val }))
   }
 
-  const handleSizeRowChange = (id: string, idx: number, qty: string) => {
-    setSizeRowMap(prev => {
-      const rows = [...(prev[id] ?? [])]
-      rows[idx] = { ...rows[idx], qty }
-      return { ...prev, [id]: rows }
-    })
-  }
-
   const handleConfirm = async (id: string) => {
     const article = articles.find(a => a.article_id === id)
-    if (!article) return
+    if (!article || !dirty[id]) return
 
-    const sizes   = articleSizes.get(id) ?? []
-    const isMulti = sizes.length > 0
+    const newQty = parseFloat(dirty[id])
+    if (isNaN(newQty)) return
 
     setSavingId(id)
     try {
-      let result: { saved: boolean }
-
-      if (isMulti) {
-        // Multi-tamanho: aceita zero (contagem explícita de zero é válida)
-        const rows = sizeRowMap[id] ?? []
-        const components = rows.map(r => ({
-          size_label:    r.size_label,
-          qty:           parseFloat(r.qty) || 0,
-          base_per_unit: r.base_per_unit,
-        }))
-        const totalBase     = components.reduce((s, c) => s + c.qty * c.base_per_unit, 0)
-        const totalStockQty = totalBase / (article.base_per_stock || 1)
-
-        result = await saveStockCount(
-          id, totalStockQty, article.stock_unit, components,
-          undefined,
-          article.current_qty_base, article.unit, article.base_per_stock,
-        )
-
-        if (result.saved) {
-          setArticles(prev =>
-            prev.map(a => a.article_id === id ? {
-              ...a,
-              current_qty_base: totalBase,
-              current_qty:      totalStockQty,
-              diff_from_par:    totalStockQty - a.par_level,
-            } : a)
-          )
-          setSizeRowMap(prev => {
-            const next = { ...prev }
-            delete next[id]
-            return next
-          })
-        }
-      } else {
-        // Modo simples: sem pré-preenchimento, valor vazio = sem contagem
-        if (!dirty[id]) { setSavingId(null); return }
-        const newQty = parseFloat(dirty[id])
-        if (isNaN(newQty)) { setSavingId(null); return }
-
-        result = await saveStockCount(
-          id, newQty, article.stock_unit,
-          undefined, undefined,
-          article.current_qty_base, article.unit, article.base_per_stock,
-        )
-
-        if (result.saved) {
-          setArticles(prev =>
-            prev.map(a => a.article_id === id ? {
-              ...a,
-              current_qty:      newQty,
-              current_qty_base: newQty * a.base_per_stock,
-              diff_from_par:    newQty - a.par_level,
-            } : a)
-          )
-          setDirty(prev => {
-            const next = { ...prev }
-            delete next[id]
-            return next
-          })
-        }
-      }
+      const result = await saveStockCount(id, newQty, article.unit, article.current_qty)
 
       if (result.saved) {
+        setArticles(prev => prev.map(a =>
+          a.article_id === id
+            ? { ...a, current_qty: newQty, diff_from_par: newQty - a.par_level }
+            : a
+        ))
+        setDirty(prev => { const next = { ...prev }; delete next[id]; return next })
         setSaveSuccess(id)
         setCountedThisSession(prev => new Set([...prev, id]))
         setTimeout(() => setSaveSuccess(null), 1500)
 
-        // Avançar para o próximo artigo (na ordem operacional actual)
         const idx  = sortedFiltered.findIndex(a => a.article_id === id)
         const next = sortedFiltered[idx + 1]
         if (next && !countedThisSession.has(next.article_id)) {
           setSelectedId(next.article_id)
-          const nextSizes = articleSizes.get(next.article_id) ?? []
-          if (nextSizes.length > 0) {
-            const nextArt = articles.find(a => a.article_id === next.article_id)
-            if (!sizeRowMap[next.article_id]) {
-              setSizeRowMap(prev => ({ ...prev, [next.article_id]: buildSizeRows(nextArt!, nextSizes) }))
-            }
-          }
         } else {
           setSelectedId(null)
         }
@@ -202,11 +103,8 @@ export default function InventoryScreen() {
     }
   }
 
-  const dirtyCount =
-    Object.keys(dirty).length +
-    Object.values(sizeRowMap).filter(rows => rows.some(r => (parseFloat(r.qty) || 0) > 0)).length
-
-  const belowPar = articles.filter(a => a.current_qty < a.par_level).length
+  const dirtyCount = Object.keys(dirty).length
+  const belowPar   = articles.filter(a => a.current_qty < a.par_level).length
 
   if (loading) {
     return (
@@ -260,15 +158,15 @@ export default function InventoryScreen() {
           value={search}
           onChange={e => setSearch(e.target.value)}
           style={{
-            width:      '100%',
-            height:     40,
-            background: 'var(--surface)',
-            border:     '1px solid var(--border)',
+            width:        '100%',
+            height:       40,
+            background:   'var(--surface)',
+            border:       '1px solid var(--border)',
             borderRadius: 8,
-            padding:    '0 12px',
-            color:      'var(--text)',
-            fontSize:   14,
-            outline:    'none',
+            padding:      '0 12px',
+            color:        'var(--text)',
+            fontSize:     14,
+            outline:      'none',
           }}
         />
       </div>
@@ -297,13 +195,7 @@ export default function InventoryScreen() {
           </div>
         )}
         {sortedFiltered.map(article => {
-          const id     = article.article_id
-          const sizes  = articleSizes.get(id) ?? []
-          const isMulti = sizes.length > 0
-          const rows   = sizeRowMap[id]
-          const isDirty = isMulti
-            ? (rows?.some(r => (parseFloat(r.qty) || 0) > 0) ?? false)
-            : !!dirty[id]
+          const id = article.article_id
 
           return (
             <div key={id}>
@@ -339,19 +231,14 @@ export default function InventoryScreen() {
               )}
               <ArticleCard
                 article={article}
-                isSelected={selectedId === id}
                 isExpanded={selectedId === id}
-                isDirty={isDirty}
+                isDirty={!!dirty[id]}
                 isCounted={countedThisSession.has(id)}
                 isSaving={savingId === id}
                 onClick={() => handleSelect(id)}
                 onConfirm={() => handleConfirm(id)}
-                // Modo simples
                 newQty={dirty[id]}
                 onQtyChange={val => handleQtyChange(id, val)}
-                // Modo multi-tamanho
-                sizeRows={isMulti && selectedId === id ? rows : undefined}
-                onSizeRowChange={(idx, qty) => handleSizeRowChange(id, idx, qty)}
               />
             </div>
           )

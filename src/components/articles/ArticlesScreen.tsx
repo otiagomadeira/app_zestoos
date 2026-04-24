@@ -6,8 +6,9 @@ import { fetchAllArticles } from '@/lib/supabase'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import ArticleForm from './ArticleForm'
 import BulkImportPanel from './BulkImportPanel'
+import AliasManagerPanel from './AliasManagerPanel'
 
-type Mode = 'idle' | 'create' | 'edit' | 'bulk-import'
+type Mode = 'idle' | 'create' | 'edit' | 'bulk-import' | 'aliases'
 
 export default function ArticlesScreen() {
   const isMobile = useIsMobile()
@@ -104,10 +105,17 @@ export default function ArticlesScreen() {
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button
+              onClick={() => setMode('aliases')}
+              title="Aliases aprendidos"
+              style={{ width: 44, height: 44, borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-subtle)', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              ⌘
+            </button>
+            <button
               onClick={() => setMode('bulk-import')}
               style={{ height: 44, padding: '0 12px', borderRadius: 8, border: `1px solid var(--action-border)`, background: 'transparent', color: 'var(--action)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
             >
-              ↓ Lista
+              + Importar
             </button>
             <button
               onClick={() => { setSelected(null); setMode('create') }}
@@ -176,12 +184,14 @@ export default function ArticlesScreen() {
                       )}
                     </div>
                   </div>
-                  <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>
-                    Par:{' '}
-                    <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--text-muted)' }}>
-                      {a.par_level} {a.stock_unit ?? a.unit}
-                    </span>
-                  </p>
+                  {a.par_level > 0 && (
+                    <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>
+                      Par:{' '}
+                      <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--text-muted)' }}>
+                        {a.par_level} {a.unit}
+                      </span>
+                    </p>
+                  )}
                 </button>
               ))}
             </div>
@@ -193,7 +203,7 @@ export default function ArticlesScreen() {
 
   // ── Right panel content ────────────────────────────────────────────────────
   const rightPanel = (
-    <div style={{ background: 'var(--primary)', display: 'flex', flexDirection: 'column', height: '100%', overflowY: mode === 'bulk-import' ? 'hidden' : 'auto', padding: mode === 'bulk-import' ? 0 : '24px 20px' }}>
+    <div style={{ background: mode === 'aliases' ? 'var(--bg)' : 'var(--primary)', display: 'flex', flexDirection: 'column', height: '100%', overflowY: mode === 'bulk-import' ? 'hidden' : 'auto', padding: mode === 'bulk-import' || mode === 'aliases' ? 0 : '24px 20px' }}>
       {mode === 'bulk-import' && (
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '24px 20px' }}>
           <BulkImportPanel
@@ -207,9 +217,13 @@ export default function ArticlesScreen() {
         <ArticleForm
           key={mode === 'edit' ? (selected?.id ?? 'edit') : 'new'}
           existing={mode === 'edit' ? selected ?? undefined : undefined}
+          articles={articles}
           onSaved={handleSaved}
           onCancel={() => { setMode('idle'); setSelected(null) }}
         />
+      )}
+      {mode === 'aliases' && (
+        <AliasManagerPanel onClose={() => setMode('idle')} />
       )}
       {mode === 'idle' && (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

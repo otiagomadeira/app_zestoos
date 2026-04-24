@@ -23,6 +23,12 @@ export function formatStockQty(qty: number, unit: string): string {
   return `${fmt(qty)} ${unit}`
 }
 
+// Unidades de embalagem para campo UN. COMPRA (fornecedores)
+export const ORDER_UNITS = [
+  'caixa', 'saco', 'frasco', 'lata', 'garrafa', 'pacote', 'balde', 'tabuleiro', 'bisnaga',
+  'maço', 'folha', 'ramo', 'dente',
+]
+
 // Unidades de medida comuns em cozinha profissional
 export const KITCHEN_UNITS = [
   // Peso

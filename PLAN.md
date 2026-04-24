@@ -14,38 +14,38 @@ Fechar loop real: **Contar → Decidir → Encomendar** (sem fricção)
 ## MILESTONE 1 — PRODUTOS
 
 ### Criação
-- [ ] Criar produto em <10s
-- [ ] Nome obrigatório
-- [ ] Unidade default automática
+- [x] Criar produto em <10s
+- [x] Nome obrigatório
+- [x] Unidade default automática (quick-pick: g / mL / un)
 - [ ] Categoria rápida (sem scroll)
 
 ### Bulk Import
-- [ ] Colar lista sem crash
-  - [ ] Suporta 20+ linhas
-  - [ ] Ignora linhas vazias
-  - [ ] Não duplica
-- [ ] Parse correto (qty + unidade)
-  - [ ] "2kg tomate"
-  - [ ] "4 leite"
-  - [ ] "1cx ovos"
-- [ ] Preview editável
-  - [ ] Nome editável
-  - [ ] Unidade editável
-  - [ ] Quantidade editável
-- [ ] Criar batch sem erro
-  - [ ] Promise.all estável
-  - [ ] Falhas não bloqueiam tudo
-  - [ ] Feedback claro
+- [x] Colar lista sem crash
+  - [x] Suporta 20+ linhas
+  - [x] Ignora linhas vazias
+  - [x] Não duplica
+- [x] Parse correto (qty + unidade)
+  - [x] "2kg tomate"
+  - [x] "4 leite"
+  - [x] "1cx ovos"
+- [x] Preview editável
+  - [x] Nome editável
+  - [x] Unidade editável
+  - [x] Quantidade editável
+- [x] Criar batch sem erro
+  - [x] Promise.all estável
+  - [x] Falhas não bloqueiam tudo
+  - [x] Feedback claro
 
 ### Duplicados
-- [ ] Detectar nomes semelhantes
-- [ ] Avisar (não bloquear)
-- [ ] Permitir continuar
+- [x] Detectar nomes semelhantes
+- [x] Avisar (não bloquear)
+- [x] Permitir continuar
 
 ### UX
-- [ ] Input sempre focado
-- [ ] Enter cria produto
-- [ ] Zero fricção geral
+- [x] Input sempre focado (autoFocus no create)
+- [x] Enter cria produto (quando nome + unidade preenchidos)
+- [ ] Zero fricção geral (testar com dados reais)
 
 **DONE** = consigo criar/importar 30 produtos em <5min
 

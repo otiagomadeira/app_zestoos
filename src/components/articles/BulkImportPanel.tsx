@@ -3,55 +3,12 @@
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Article } from '@/types/database'
-import { createArticle, saveArticleSizes } from '@/lib/supabase'
+import { createArticle } from '@/lib/supabase'
 import { KITCHEN_UNITS } from '@/lib/units'
 import { parseProductLines, recomputeDuplicates, type ParsedLine } from '@/lib/parseProductLines'
 import { suggestCategory } from '@/lib/categoryKeywords'
-
-// ── Variantes de tamanho ──────────────────────────────────────────────────────
-
-// Formas canónicas (pós-normalização pelo parser) que têm base_unit conhecida.
-// kg e L são convertidos para g e mL pelo parser — nunca chegam aqui.
-const KNOWN_UNITS = new Set(['g', 'mL', 'un', 'peça', 'porção'])
-
-/**
- * Converte uma linha variante num registo de article_sizes.
- * Retorna null se a unidade não é reconhecida (sem base_unit → skip no MVP).
- * rawQty é preservado para deduplicação sem parseFloat(label).
- */
-function variantToSize(
-  v: ParsedLine,
-  _primaryUnit: string,
-): { label: string; base_per_unit: number; rawQty: number } | null {
-  if (!v.unit || !KNOWN_UNITS.has(v.unit)) return null
-  // qty já está em base_unit (g ou mL) — o parser normalizou kg→g e L→mL
-  const rawQty = parseFloat(v.base_per_order || v.qty)
-  if (!rawQty) return null
-
-  const label = `${v.base_per_order || v.qty}${v.unit}`  // ex: "200g", "500g"
-
-  return { label, base_per_unit: rawQty, rawQty }
-}
-
-/**
- * Deduplica variantes por base_per_unit.
- * Quando há colisão, menor rawQty vence (unidade maior = mais legível: "1kg" vs "1000g").
- * Não usa parseFloat(label) — rawQty vem directamente do pipeline.
- */
-function deduplicateSizes(
-  sizes: { label: string; base_per_unit: number; rawQty: number }[],
-): { label: string; base_per_unit: number; sort_order: number }[] {
-  const map = new Map<number, { label: string; rawQty: number }>()
-  for (const s of sizes) {
-    const existing = map.get(s.base_per_unit)
-    if (!existing || s.rawQty < existing.rawQty) {
-      map.set(s.base_per_unit, { label: s.label, rawQty: s.rawQty })
-    }
-  }
-  return Array.from(map.entries())
-    .sort(([a], [b]) => a - b)
-    .map(([base_per_unit, { label }], i) => ({ label, base_per_unit, sort_order: i }))
-}
+import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
+import { useOrgAliases } from '@/hooks/useOrgAliases'
 
 // ── Estilos base (consistentes com os outros forms) ───────────────────────────
 
@@ -160,12 +117,22 @@ function LineRow({ line, onChange, onDelete, onApplySuggestion: _onApplySuggesti
       {/* Fila 2: Categoria + Eliminar */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6, alignItems: 'end' }}>
         <div>
-          <label style={labelStyle}>CATEGORIA</label>
+          <label style={labelStyle}>
+            CATEGORIA
+            {!line.categoryConfident && line.category && (
+              <span title="Categoria inferida com baixa confiança — verifica antes de guardar" style={{ marginLeft: 4, color: 'var(--warning)', fontSize: 10 }}>?</span>
+            )}
+          </label>
           <input
             value={line.category}
             onChange={e => onChange(line.id, 'category', e.target.value)}
             placeholder="opcional"
-            style={inputStyle}
+            style={{
+              ...inputStyle,
+              border: !line.categoryConfident && line.category
+                ? `1px solid var(--warning)`
+                : inputStyle.border,
+            }}
           />
         </div>
         <button
@@ -204,20 +171,11 @@ type CardSharedProps = {
 }
 
 function OkCard({
-  line, variants, isForced, isResolved, onChange, onDelete, onApplySuggestion,
+  line, isForced, isResolved, onChange, onDelete, onApplySuggestion,
 }: CardSharedProps & {
-  variants:   ParsedLine[]
   isForced:   boolean
   isResolved: boolean
 }) {
-  const unitTrimmed  = line.unit.trim()
-  const dedupedSizes = deduplicateSizes(
-    variants
-      .map(v => variantToSize(v, unitTrimmed))
-      .filter((x): x is NonNullable<ReturnType<typeof variantToSize>> => x !== null)
-  )
-  const skippedCount = variants.filter(v => !v.unit || !KNOWN_UNITS.has(v.unit)).length
-
   return (
     <div>
       {isForced && (
@@ -234,21 +192,6 @@ function OkCard({
         onApplySuggestion={onApplySuggestion}
         isResolved={isResolved}
       />
-      {variants.length > 0 && (
-        <div style={{ marginTop: 4, marginLeft: 12, padding: '6px 10px', background: 'var(--border-on-primary-soft)', border: `1px solid var(--border-on-primary-soft)`, borderRadius: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 10, color: 'var(--text-on-primary-faint)', letterSpacing: '0.06em', fontWeight: 700 }}>VARIANTES</span>
-          {dedupedSizes.map((s, i) => (
-            <span key={i} style={{ fontSize: 11, color: 'var(--text-on-primary-subtle)', background: 'var(--border-on-primary-soft)', border: `1px solid var(--border-on-primary)`, borderRadius: 4, padding: '1px 6px', fontFamily: 'JetBrains Mono, monospace' }}>
-              {s.label}
-            </span>
-          ))}
-          {skippedCount > 0 && (
-            <span style={{ fontSize: 10, color: 'var(--warning-text)', marginLeft: 2 }}>
-              · {skippedCount} sem unidade base
-            </span>
-          )}
-        </div>
-      )}
     </div>
   )
 }
@@ -309,6 +252,7 @@ type Props = {
 
 export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: Props) {
   const router = useRouter()
+  const { aliases, learnAlias } = useOrgAliases()
   const [step,         setStep]         = useState<'input' | 'preview' | 'success'>('input')
   const [rawText,      setRawText]      = useState('')
   const [lines,        setLines]        = useState<ParsedLine[]>([])
@@ -346,7 +290,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
   const lineCount = rawText.split('\n').filter(l => l.trim() !== '').length
 
   const handleProcess = () => {
-    const parsed = parseProductLines(rawText, articles)
+    const parsed = parseProductLines(rawText, articles, aliases)
     setLines(parsed)
     setError(null)
     setResult(null)
@@ -360,8 +304,13 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
       const updated = prev.map(l => {
         if (l.id !== id) return l
         const next = { ...l, [field]: value }
-        // Quando o nome muda, recalcular sugestão de categoria
-        if (field === 'name') next.suggestedCategory = suggestCategory(value, l.unit)
+        if (field === 'name') {
+          // Utilizador editou o nome no preview → marcar para não aprender alias automático
+          next.wasManuallyEdited = true
+          const catResult = suggestCategory({ name: value, unit: l.unit })
+          next.suggestedCategory   = catResult.category
+          next.categoryConfident   = catResult.confident
+        }
         return next
       })
       if (field === 'name') return recomputeDuplicates(updated, articles)
@@ -380,16 +329,15 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
   const activeLines = lines.filter(l => !l.deleted)
 
   // Group by name: first occurrence = primary article, rest = size variants
-  const normName = (s: string) => s.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   const nameToFirstId = new Map<string, string>()
   const variantsByPrimaryId = new Map<string, ParsedLine[]>()
   for (const line of activeLines) {
-    const key = normName(line.name)
+    const key = normalizeKey(line.name)
     if (line.name.trim() === '') continue
     if (!nameToFirstId.has(key)) {
       nameToFirstId.set(key, line.id)
     } else {
-      const pid = nameToFirstId.get(key)!
+      const pid      = nameToFirstId.get(key)!
       const existing = variantsByPrimaryId.get(pid) ?? []
       existing.push(line)
       variantsByPrimaryId.set(pid, existing)
@@ -419,24 +367,14 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
 
     const results = await Promise.allSettled(
       toCreate.map(async line => {
-        const stockUnitTrimmed = line.stock_unit.trim()
-        const unitTrimmed      = line.unit.trim()
-        const created = await createArticle({
-          name:       line.name.trim(),
-          unit:       unitTrimmed,
-          stock_unit: (stockUnitTrimmed && stockUnitTrimmed !== unitTrimmed)
-            ? stockUnitTrimmed
-            : null,
-          par_level:  parseFloat(line.par_level) || 0,
-          category:   line.category.trim() || undefined,
+        const savedName = line.name.trim()
+        maybeLearnAlias(line.originalName, savedName, aliases, learnAlias, line.wasManuallyEdited)
+        return createArticle({
+          name:      savedName,
+          unit:      line.unit.trim(),
+          par_level: parseFloat(line.par_level) || 0,
+          category:  line.category.trim() || undefined,
         })
-        const variants = variantsByPrimaryId.get(line.id) ?? []
-        const raw = variants
-          .map(v => variantToSize(v, unitTrimmed))
-          .filter((x): x is NonNullable<ReturnType<typeof variantToSize>> => x !== null)
-        const sizes = deduplicateSizes(raw)
-        if (sizes.length > 0) await saveArticleSizes(created.id, sizes)
-        return created
       })
     )
 
@@ -477,13 +415,6 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
       <datalist id="bulk-units-datalist">
         {KITCHEN_UNITS.map(u => <option key={u} value={u} />)}
       </datalist>
-      <datalist id="bulk-stock-units-datalist">
-        {KITCHEN_UNITS.map(u => <option key={u} value={u} />)}
-        {['saco', 'molho', 'maço', 'garrafa', 'garrafão', 'lata', 'caixa', 'ramo', 'balde', 'frasco'].map(u =>
-          <option key={u} value={u} />
-        )}
-      </datalist>
-
       {/* ── Header ── */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
@@ -592,7 +523,6 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
                     <OkCard
                       key={line.id}
                       line={line}
-                      variants={variantsByPrimaryId.get(line.id) ?? []}
                       isForced={forcedIds.has(line.id)}
                       isResolved={justResolvedIds.has(line.id)}
                       onChange={handleLineChange}
