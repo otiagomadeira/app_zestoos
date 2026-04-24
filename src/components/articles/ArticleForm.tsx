@@ -10,6 +10,7 @@ import { ORDER_UNITS } from '@/lib/units'
 import { ARTICLE_CATEGORIES, suggestCategory } from '@/lib/categoryKeywords'
 import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
 import { normalizeArticleInput } from '@/lib/normalizeArticle'
+import { parseArticleInput, type ParsedArticleInput } from '@/lib/parseArticleInput'
 import { useOrgAliases } from '@/hooks/useOrgAliases'
 
 interface Props {
@@ -89,6 +90,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   const [error,              setError]             = useState<string | null>(null)
   const [isDirty,            setIsDirty]           = useState(false)
   const [duplicateWarning,   setDuplicateWarning]  = useState<string | null>(null)
+  const [parsedHint,         setParsedHint]         = useState<ParsedArticleInput | null>(null)
 
   const { aliases, learnAlias } = useOrgAliases()
   const rawNameRef             = useRef(existing?.name ?? '')
@@ -96,6 +98,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   const nameChangedAfterBlurRef = useRef(false)
 
   const handleNameBlur = () => {
+    setParsedHint(null)
     if (!name.trim()) return
 
     // Pipeline única — normaliza nome, infere unidade e categoria
@@ -248,12 +251,19 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             value={name}
             autoFocus={!isEdit}
             onChange={e => {
-              setName(e.target.value)
-              rawNameRef.current = e.target.value
+              const val = e.target.value
+              setName(val)
+              rawNameRef.current = val
               nameChangedAfterBlurRef.current = true
               setIsDirty(true)
-              // Limpar aviso de duplicado enquanto o utilizador escreve
               if (duplicateWarning) setDuplicateWarning(null)
+              // Hint de parsing em tempo real
+              const parsed = parseArticleInput(val)
+              const hasExtracted =
+                parsed.detected_qty != null ||
+                parsed.detected_unit != null ||
+                parsed.detected_packaging != null
+              setParsedHint(hasExtracted ? parsed : null)
             }}
             onBlur={handleNameBlur}
             onKeyDown={e => { if (e.key === 'Enter' && name.trim() && unit.trim()) handleSave() }}
@@ -262,6 +272,26 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           {duplicateWarning && (
             <p style={{ fontSize: 11, color: 'var(--warning)', marginTop: 4 }}>
               {duplicateWarning}
+            </p>
+          )}
+          {parsedHint && !duplicateWarning && (
+            <p style={{
+              fontSize:   11,
+              color:      'var(--text-muted)',
+              marginTop:  4,
+              lineHeight: 1.4,
+              fontFamily: 'JetBrains Mono, monospace',
+            }}>
+              {[
+                parsedHint.detected_qty != null && parsedHint.detected_unit
+                  ? `${parsedHint.detected_qty} ${parsedHint.detected_unit}`
+                  : parsedHint.detected_qty != null
+                    ? String(parsedHint.detected_qty)
+                    : null,
+                parsedHint.detected_packaging,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </p>
           )}
         </div>
