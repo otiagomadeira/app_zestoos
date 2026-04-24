@@ -2,17 +2,22 @@
 -- ZESTO OS — Schema v9
 -- Simplificação do modelo de stock para MVP
 --
--- 0. Remove coluna stock_unit de articles (obsoleta)
--- 1. Migra conversion_factor ← base_per_order_unit onde configurado
--- 2. Simplifica current_stock: base_per_stock=1, stock_unit=unit
--- 3. Simplifica order_suggestions: remove dependência de stock_unit
--- 4. Cria RPC receive_order: receção atómica numa transação
+-- 0. Drop views dependentes ANTES de remover a coluna stock_unit
+-- 1. Remove coluna stock_unit de articles (obsoleta)
+-- 2. Migra conversion_factor ← base_per_order_unit onde configurado
+-- 3. Recria current_stock: base_per_stock=1, stock_unit=unit
+-- 4. Recria order_suggestions: sem dependência de stock_unit
+-- 5. Cria RPC receive_order: receção atómica numa transação
 -- ============================================================
 
--- ── 0. Remover coluna stock_unit (já não usada pelo código) ──────────────────
+-- ── 0. Drop views dependentes (têm de ir antes do DROP COLUMN) ───────────────
+DROP VIEW IF EXISTS order_suggestions;
+DROP VIEW IF EXISTS current_stock;
+
+-- ── 1. Remover coluna stock_unit (já não usada pelo código) ──────────────────
 ALTER TABLE articles DROP COLUMN IF EXISTS stock_unit;
 
--- ── 1. Migrar conversion_factor ← base_per_order_unit ─────────────────────────
+-- ── 2. Migrar conversion_factor ← base_per_order_unit ─────────────────────────
 -- Após esta migração, conversion_factor = base_units por order_unit para todos
 -- os artigos que tinham base_per_order_unit configurado.
 UPDATE article_suppliers
@@ -20,11 +25,7 @@ SET conversion_factor = base_per_order_unit
 WHERE base_per_order_unit IS NOT NULL
   AND base_per_order_unit > 0;
 
--- ── 2. Simplificar view current_stock ────────────────────────────────────────
--- Remove a dependência ao fornecedor preferido: base_per_stock=1, stock_unit=unit.
-DROP VIEW IF EXISTS order_suggestions;
-DROP VIEW IF EXISTS current_stock;
-
+-- ── 3. Recriar view current_stock ────────────────────────────────────────────
 CREATE VIEW current_stock AS
 SELECT
   a.id                             AS article_id,
@@ -42,7 +43,7 @@ LEFT JOIN stock_movements sm ON sm.article_id = a.id
 WHERE a.is_active = TRUE
 GROUP BY a.id, a.name, a.unit, a.par_level, a.category;
 
--- ── 3. Simplificar view order_suggestions ────────────────────────────────────
+-- ── 4. Recriar view order_suggestions ────────────────────────────────────────
 CREATE VIEW order_suggestions AS
 SELECT
   cs.article_id,
@@ -75,7 +76,7 @@ WHERE cs.current_qty < cs.par_level
       AND o.status IN ('DRAFT', 'SENT')
   );
 
--- ── 4. RPC receive_order ──────────────────────────────────────────────────────
+-- ── 5. RPC receive_order ──────────────────────────────────────────────────────
 -- Substitui a lógica multi-query do cliente por uma transação atómica.
 -- SECURITY INVOKER (default): corre com as credenciais do utilizador (RLS activo).
 CREATE OR REPLACE FUNCTION receive_order(p_order_id UUID)
