@@ -75,10 +75,11 @@ export default function OrderListScreen() {
   const sent   = orders.filter(o => o.status === 'SENT')
 
   return (
+    <div style={{ height: '100%', overflowY: 'auto' }}>
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '0 16px 40px' }}>
 
       {/* Header */}
-      <div style={{ padding: '20px 0 16px', borderBottom: '1px solid rgba(28,20,10,0.1)', marginBottom: 20 }}>
+      <div style={{ padding: '20px 0 16px', borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
         <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>Encomendas</h2>
         <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 4 }}>
           {drafts.length} rascunho{drafts.length !== 1 ? 's' : ''}
@@ -88,7 +89,7 @@ export default function OrderListScreen() {
 
       {error && (
         <div style={{
-          background: 'rgba(139,46,46,0.08)', border: '1px solid var(--error)',
+          background: 'var(--error-surface)', border: '1px solid var(--error-border)',
           borderRadius: 8, padding: '10px 14px', color: 'var(--error)',
           fontSize: 13, marginBottom: 16,
         }}>
@@ -98,7 +99,7 @@ export default function OrderListScreen() {
 
       {orders.length === 0 && (
         <div style={{
-          background: 'rgba(28,20,10,0.04)', border: '1px solid rgba(28,20,10,0.1)',
+          background: 'var(--surface)', border: '1px solid var(--border)',
           borderRadius: 12, padding: '32px 24px', textAlign: 'center',
         }}>
           <p style={{ fontSize: 14, color: 'var(--text-subtle)' }}>Nenhuma encomenda activa.</p>
@@ -127,7 +128,7 @@ export default function OrderListScreen() {
 
       {/* Rascunhos */}
       {drafts.length > 0 && (
-        <Section label="Rascunhos" accent="#A07010">
+        <Section label="Rascunhos" accent="var(--warning-text)">
           {drafts.map(order => (
             <OrderCard
               key={order.id}
@@ -141,6 +142,7 @@ export default function OrderListScreen() {
           ))}
         </Section>
       )}
+    </div>
     </div>
   )
 }
@@ -159,7 +161,7 @@ function Section({ label, accent, children }: {
         <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-subtle)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
           {label}
         </span>
-        <div style={{ flex: 1, height: 1, background: 'rgba(28,20,10,0.1)' }} />
+        <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {children}
@@ -185,7 +187,7 @@ function OrderCard({ order, isExpanded, isActing, onToggle, onSend, onReceive }:
 
   return (
     <div style={{
-      background:   isExpanded ? 'rgba(196,106,45,0.06)' : 'var(--surface)',
+      background:   isExpanded ? 'var(--action-surface)' : 'var(--surface)',
       border:       `1px solid ${isExpanded ? 'var(--action)' : 'var(--border)'}`,
       borderRadius: 12,
       overflow:     'hidden',
@@ -221,7 +223,7 @@ function OrderCard({ order, isExpanded, isActing, onToggle, onSend, onReceive }:
       {/* Expanded */}
       {isExpanded && (
         <div
-          style={{ padding: '0 16px 14px', borderTop: '1px solid rgba(28,20,10,0.1)', paddingTop: 12 }}
+          style={{ padding: '0 16px 14px', borderTop: '1px solid var(--border)', paddingTop: 12 }}
           onClick={e => e.stopPropagation()}
         >
           {/* Items */}
@@ -265,10 +267,10 @@ function OrderCard({ order, isExpanded, isActing, onToggle, onSend, onReceive }:
 
 function StatusBadge({ status }: { status: OrderWithDetails['status'] }) {
   const map: Record<string, { label: string; bg: string; color: string }> = {
-    DRAFT:  { label: 'Rascunho', bg: 'rgba(184,134,11,0.1)',  color: '#A07010' },
-    SENT:   { label: 'Enviada',  bg: 'rgba(85,107,71,0.12)',  color: 'var(--success)' },
+    DRAFT:  { label: 'Rascunho', bg: 'var(--warning-surface)', color: 'var(--warning-text)' },
+    SENT:   { label: 'Enviada',  bg: 'var(--success-surface)', color: 'var(--success)' },
   }
-  const s = map[status] ?? { label: status, bg: 'rgba(28,20,10,0.08)', color: 'var(--text-subtle)' }
+  const s = map[status] ?? { label: status, bg: 'var(--surface-2)', color: 'var(--text-subtle)' }
   return (
     <span style={{
       fontSize: 10, fontWeight: 600, letterSpacing: '0.06em',
@@ -282,9 +284,9 @@ function StatusBadge({ status }: { status: OrderWithDetails['status'] }) {
 
 function actionBtn(bg: string, disabled: boolean): React.CSSProperties {
   return {
-    height: 38, padding: '0 16px', borderRadius: 8,
-    border: 'none', background: disabled ? 'rgba(28,20,10,0.1)' : bg,
-    color: disabled ? 'var(--text-subtle)' : '#FFFFFF',
+    height: 44, padding: '0 16px', borderRadius: 8,
+    border: 'none', background: disabled ? 'var(--surface-2)' : bg,
+    color: disabled ? 'var(--text-subtle)' : 'var(--text-on-primary)',
     fontSize: 13, fontWeight: 600,
     cursor: disabled ? 'default' : 'pointer',
   }

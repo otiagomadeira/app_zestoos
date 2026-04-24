@@ -27,12 +27,49 @@
   --border-focus: #C46A2D;
 
   /* States */
-  --success: #556B47;
-  --warning: #F59E0B;
-  --error:   #8B2E2E;
+  --success:            #556B47;
+  --warning:            #F59E0B;
+  --error:              #8B2E2E;
+  --warning-text:       #A07010;   /* aviso legível em fundo claro */
+  --error-on-primary:   #FCA5A5;   /* erro legível em fundo --primary */
+  --success-on-primary: #6EE7A0;   /* confirmação legível em fundo --primary */
 
   /* Utilities */
   --touch-min: 44px;
+  --white: #FFFFFF;
+  --primary-surface: rgba(31,58,46,0.08);   /* fundo decorativo sobre --white, derivado de --primary */
+
+  /* Text on --primary (painéis escuros) */
+  --text-on-primary-muted:   rgba(242,233,220,0.55);
+  --text-on-primary-subtle:  rgba(242,233,220,0.45);
+  --text-on-primary-faint:   rgba(242,233,220,0.30);
+
+  /* Borders on --primary */
+  --border-on-primary:        rgba(242,233,220,0.12);
+  --border-on-primary-medium: rgba(242,233,220,0.20);
+  --border-on-primary-soft:   rgba(242,233,220,0.08);
+
+  /* Action overlays (sobre fundo claro) */
+  --action-surface:        rgba(196,106,45,0.08);
+  --action-surface-strong: rgba(196,106,45,0.20);
+  --action-disabled:       rgba(196,106,45,0.30);
+  --action-border:         rgba(196,106,45,0.40);
+
+  /* Warning overlays */
+  --warning-surface: rgba(245,158,11,0.10);
+  --warning-border:  rgba(245,158,11,0.50);
+
+  /* Error overlays */
+  --error-surface:   rgba(139,46,46,0.08);
+  --error-border:    rgba(139,46,46,0.30);
+
+  /* Success feedback (sobre fundo claro) */
+  --success-surface: rgba(85,107,71,0.10);
+  --success-border:  rgba(85,107,71,0.40);
+
+  /* Success feedback (sobre fundo --primary) */
+  --success-surface-on-primary: rgba(85,107,71,0.20);
+  --success-border-on-primary:  rgba(110,231,160,0.50);
 }
 
 * {
@@ -41,8 +78,8 @@
 
 html,
 body {
-  background-color: var(--bg-base);
-  color: var(--text-primary);
+  background-color: var(--bg);
+  color: var(--text);
   font-family: var(--font-montserrat), system-ui, sans-serif;
   font-size: 16px;
   line-height: 1.5;
@@ -67,6 +104,6 @@ h1, h2, h3, h4 {
 .mono { font-family: var(--font-mono), monospace; }
 
 :focus-visible {
-  outline: 2px solid #C46A2D;
+  outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }

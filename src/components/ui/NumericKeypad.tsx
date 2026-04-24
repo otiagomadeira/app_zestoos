@@ -52,7 +52,7 @@ export default function NumericKeypad({
       {/* Display */}
       <div style={{
         background:   'var(--bg)',
-        border:       '1px solid rgba(28,20,10,0.15)',
+        border:       '1px solid var(--border)',
         borderRadius: 12,
         padding:      '16px 20px',
         display:      'flex',
@@ -112,7 +112,7 @@ export default function NumericKeypad({
               }}
               onMouseDown={(e) => {
                 const t = e.currentTarget
-                t.style.background = '#D9CDB8'
+                t.style.background = 'var(--surface-2)'
                 t.style.transform  = 'scale(0.96)'
               }}
               onMouseUp={(e) => {
@@ -122,7 +122,7 @@ export default function NumericKeypad({
               }}
               onTouchStart={(e) => {
                 const t = e.currentTarget
-                t.style.background = '#D9CDB8'
+                t.style.background = 'var(--surface-2)'
                 t.style.transform  = 'scale(0.96)'
               }}
               onTouchEnd={(e) => {
@@ -148,7 +148,7 @@ export default function NumericKeypad({
             borderRadius:   10,
             border:         'none',
             background:     'var(--action)',
-            color:          '#FFFFFF',
+            color:          'var(--text-on-primary)',
             fontSize:       16,
             fontWeight:     600,
             cursor:         'pointer',

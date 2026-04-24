@@ -23,7 +23,7 @@ const EMPTY_INGREDIENT = (): IngredientRowValue => ({
 
 const labelStyle: React.CSSProperties = {
   fontSize:      11,
-  color:         'rgba(242,233,220,0.55)',
+  color:         'var(--text-on-primary-muted)',
   letterSpacing: '0.06em',
   marginBottom:  4,
   display:       'block',
@@ -33,7 +33,7 @@ const inputStyle: React.CSSProperties = {
   width:        '100%',
   height:       40,
   background:   'var(--bg)',
-  border:       '1px solid rgba(28,20,10,0.18)',
+  border:       '1px solid var(--border)',
   borderRadius: 8,
   padding:      '0 12px',
   color:        'var(--text)',
@@ -148,11 +148,11 @@ export default function ProductionForm({ existing, onSaved, onCancel }: Props) {
       <div style={{ marginBottom: 20, flexShrink: 0 }}>
         <button
           onClick={onCancel}
-          style={{ background: 'none', border: 'none', color: 'rgba(242,233,220,0.5)', fontSize: 13, cursor: 'pointer', padding: 0, marginBottom: 12 }}
+          style={{ background: 'none', border: 'none', color: 'var(--text-on-primary-muted)', fontSize: 13, cursor: 'pointer', padding: 0, marginBottom: 12 }}
         >
           ← Cancelar
         </button>
-        <p style={{ fontSize: 11, color: 'rgba(242,233,220,0.45)', letterSpacing: '0.08em', marginBottom: 4 }}>
+        <p style={{ fontSize: 11, color: 'var(--text-on-primary-subtle)', letterSpacing: '0.08em', marginBottom: 4 }}>
           {isEdit ? 'EDITAR FICHA' : 'NOVA FICHA'}
         </p>
         <h3 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-on-primary)' }}>
@@ -215,7 +215,7 @@ export default function ProductionForm({ existing, onSaved, onCancel }: Props) {
 
         {/* Ingredientes */}
         <div>
-          <p style={{ fontSize: 11, color: 'rgba(242,233,220,0.45)', letterSpacing: '0.08em', marginBottom: 8 }}>INGREDIENTES</p>
+          <p style={{ fontSize: 11, color: 'var(--text-on-primary-subtle)', letterSpacing: '0.08em', marginBottom: 8 }}>INGREDIENTES</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {ingredients.map((ing, idx) => (
               <IngredientRow
@@ -233,9 +233,9 @@ export default function ProductionForm({ existing, onSaved, onCancel }: Props) {
           <button
             onClick={addIngredient}
             style={{
-              width: '100%', height: 38, marginTop: 8,
-              borderRadius: 8, border: '1px dashed rgba(242,233,220,0.2)',
-              background: 'transparent', color: 'rgba(242,233,220,0.5)',
+              width: '100%', height: 44, marginTop: 8,
+              borderRadius: 8, border: `1px dashed var(--border-on-primary-medium)`,
+              background: 'transparent', color: 'var(--text-on-primary-muted)',
               fontSize: 13, cursor: 'pointer',
             }}
           >
@@ -244,24 +244,24 @@ export default function ProductionForm({ existing, onSaved, onCancel }: Props) {
         </div>
 
         {error && (
-          <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: 8, padding: '10px 14px', color: '#FCA5A5', fontSize: 13 }}>
+          <div style={{ background: 'var(--error-surface)', border: `1px solid var(--error-border)`, borderRadius: 8, padding: '10px 14px', color: 'var(--error-on-primary)', fontSize: 13 }}>
             {error}
           </div>
         )}
       </div>
 
       {/* Footer */}
-      <div style={{ paddingTop: 16, borderTop: '1px solid rgba(242,233,220,0.1)', marginTop: 16, display: 'flex', gap: 10, flexShrink: 0 }}>
+      <div style={{ paddingTop: 16, borderTop: `1px solid var(--border-on-primary-soft)`, marginTop: 16, display: 'flex', gap: 10, flexShrink: 0 }}>
         <button
           onClick={onCancel}
-          style={{ flex: 1, height: 48, borderRadius: 10, border: '1px solid rgba(242,233,220,0.15)', background: 'transparent', color: 'rgba(242,233,220,0.6)', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}
+          style={{ flex: 1, height: 48, borderRadius: 10, border: `1px solid var(--border-on-primary)`, background: 'transparent', color: 'var(--text-on-primary-muted)', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}
         >
           Cancelar
         </button>
         <button
           onClick={handleSave}
           disabled={saving}
-          style={{ flex: 2, height: 48, borderRadius: 10, border: 'none', background: 'var(--action)', color: '#FFFFFF', fontSize: 15, fontWeight: 600, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1, letterSpacing: '0.02em' }}
+          style={{ flex: 2, height: 48, borderRadius: 10, border: 'none', background: 'var(--action)', color: 'var(--text-on-primary)', fontSize: 15, fontWeight: 600, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1, letterSpacing: '0.02em' }}
         >
           {saving ? 'A guardar…' : isEdit ? 'Guardar Alterações' : 'Guardar Ficha'}
         </button>

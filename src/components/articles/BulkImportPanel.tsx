@@ -59,19 +59,19 @@ const labelStyle: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
   letterSpacing: '0.08em',
-  color: 'rgba(242,233,220,0.55)',
+  color: 'var(--text-on-primary-muted)',
   marginBottom: 4,
   display: 'block',
 }
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
-  height: 32,
-  background: 'rgba(242,233,220,0.08)',
-  border: '1px solid rgba(242,233,220,0.15)',
+  height: 44,
+  background: 'var(--border-on-primary-soft)',
+  border: `1px solid var(--border-on-primary)`,
   borderRadius: 6,
   padding: '0 8px',
-  color: '#F2E9DC',
+  color: 'var(--text-on-primary)',
   fontSize: 13,
   outline: 'none',
   boxSizing: 'border-box',
@@ -94,8 +94,8 @@ function LineRow({ line, onChange, onDelete, onApplySuggestion: _onApplySuggesti
 
   return (
     <div style={{
-      background:    isInvalid ? 'rgba(139,46,46,0.12)' : isResolved ? 'rgba(100,200,120,0.06)' : 'rgba(242,233,220,0.04)',
-      border:        `1px solid ${isInvalid ? 'rgba(139,46,46,0.4)' : isResolved ? 'rgba(100,200,120,0.4)' : 'rgba(242,233,220,0.1)'}`,
+      background:    isInvalid ? 'var(--error-surface)' : isResolved ? 'var(--success-surface-on-primary)' : 'var(--border-on-primary-soft)',
+      border:        `1px solid ${isInvalid ? 'var(--error-border)' : isResolved ? 'var(--success-border-on-primary)' : 'var(--border-on-primary-soft)'}`,
       borderRadius:  8,
       padding:       '10px 12px',
       display:       'flex',
@@ -111,13 +111,13 @@ function LineRow({ line, onChange, onDelete, onApplySuggestion: _onApplySuggesti
             value={line.name}
             onChange={e => onChange(line.id, 'name', e.target.value)}
             placeholder="Nome do produto"
-            style={{ ...inputStyle, border: line.name.trim() === '' ? '1px solid rgba(139,46,46,0.6)' : inputStyle.border }}
+            style={{ ...inputStyle, border: line.name.trim() === '' ? `1px solid var(--error)` : inputStyle.border }}
           />
         </div>
         <div>
           {unitMissing ? (
             <>
-              <span style={{ ...labelStyle, color: 'rgba(196,106,45,0.7)' }}>Seleciona unidade</span>
+              <span style={{ ...labelStyle, color: 'var(--warning-text)' }}>Seleciona unidade</span>
               <div style={{ display: 'flex', gap: 4 }}>
                 {(['g', 'mL', 'un'] as const).map(u => (
                   <button
@@ -126,11 +126,11 @@ function LineRow({ line, onChange, onDelete, onApplySuggestion: _onApplySuggesti
                     onClick={() => { onChange(line.id, 'unit', u); onResolved?.(line.id) }}
                     style={{
                       flex:         1,
-                      height:       32,
+                      height:       44,
                       borderRadius: 6,
-                      border:       '1px solid rgba(196,106,45,0.6)',
-                      background:   'rgba(196,106,45,0.12)',
-                      color:        '#C46A2D',
+                      border:       `1px solid var(--action-border)`,
+                      background:   'var(--action-surface)',
+                      color:        'var(--action)',
                       fontSize:     11,
                       fontWeight:   700,
                       cursor:       'pointer',
@@ -173,12 +173,12 @@ function LineRow({ line, onChange, onDelete, onApplySuggestion: _onApplySuggesti
           title="Eliminar linha"
           style={{
             alignSelf:    'flex-end',
-            width:        32,
-            height:       32,
+            width:        44,
+            height:       44,
             borderRadius: 6,
-            border:       '1px solid rgba(242,233,220,0.15)',
-            background:   'rgba(139,46,46,0.2)',
-            color:        'rgba(242,233,220,0.7)',
+            border:       `1px solid var(--border-on-primary)`,
+            background:   'var(--error-surface)',
+            color:        'var(--text-on-primary-muted)',
             fontSize:     16,
             cursor:       'pointer',
             display:      'flex',
@@ -222,7 +222,7 @@ function OkCard({
     <div>
       {isForced && (
         <div style={{ marginBottom: 4 }}>
-          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', color: 'rgba(100,200,120,0.7)', background: 'rgba(100,200,120,0.1)', border: '1px solid rgba(100,200,120,0.25)', borderRadius: 4, padding: '1px 6px' }}>
+          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--success-on-primary)', background: 'var(--success-surface-on-primary)', border: `1px solid var(--success-border-on-primary)`, borderRadius: 4, padding: '1px 6px' }}>
             NOVO
           </span>
         </div>
@@ -235,15 +235,15 @@ function OkCard({
         isResolved={isResolved}
       />
       {variants.length > 0 && (
-        <div style={{ marginTop: 4, marginLeft: 12, padding: '6px 10px', background: 'rgba(242,233,220,0.04)', border: '1px solid rgba(242,233,220,0.08)', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 10, color: 'rgba(242,233,220,0.35)', letterSpacing: '0.06em', fontWeight: 700 }}>VARIANTES</span>
+        <div style={{ marginTop: 4, marginLeft: 12, padding: '6px 10px', background: 'var(--border-on-primary-soft)', border: `1px solid var(--border-on-primary-soft)`, borderRadius: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 10, color: 'var(--text-on-primary-faint)', letterSpacing: '0.06em', fontWeight: 700 }}>VARIANTES</span>
           {dedupedSizes.map((s, i) => (
-            <span key={i} style={{ fontSize: 11, color: 'rgba(242,233,220,0.5)', background: 'rgba(242,233,220,0.07)', border: '1px solid rgba(242,233,220,0.12)', borderRadius: 4, padding: '1px 6px', fontFamily: 'JetBrains Mono, monospace' }}>
+            <span key={i} style={{ fontSize: 11, color: 'var(--text-on-primary-subtle)', background: 'var(--border-on-primary-soft)', border: `1px solid var(--border-on-primary)`, borderRadius: 4, padding: '1px 6px', fontFamily: 'JetBrains Mono, monospace' }}>
               {s.label}
             </span>
           ))}
           {skippedCount > 0 && (
-            <span style={{ fontSize: 10, color: 'rgba(160,112,16,0.7)', marginLeft: 2 }}>
+            <span style={{ fontSize: 10, color: 'var(--warning-text)', marginLeft: 2 }}>
               · {skippedCount} sem unidade base
             </span>
           )}
@@ -271,26 +271,26 @@ function DuplicateCard({
   line, onForceCreate, onDelete,
 }: { line: ParsedLine; onForceCreate: (id: string) => void; onDelete: (id: string) => void }) {
   return (
-    <div style={{ background: 'rgba(242,233,220,0.02)', border: '1px solid rgba(242,233,220,0.07)', borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+    <div style={{ background: 'var(--border-on-primary-soft)', border: `1px solid var(--border-on-primary-soft)`, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
       <div>
-        <span style={{ fontSize: 13, color: 'rgba(242,233,220,0.4)', textDecoration: 'line-through' }}>
+        <span style={{ fontSize: 13, color: 'var(--text-on-primary-faint)', textDecoration: 'line-through' }}>
           {line.name}
         </span>
-        <span style={{ fontSize: 11, color: 'rgba(242,233,220,0.25)', marginLeft: 8 }}>
+        <span style={{ fontSize: 11, color: 'var(--text-on-primary-faint)', marginLeft: 8 }}>
           {line.isDuplicateInBatch && !line.isDuplicate ? 'repetido na lista' : 'já existe'}
         </span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         <button
           onClick={() => onForceCreate(line.id)}
-          style={{ height: 28, borderRadius: 6, border: '1px solid rgba(196,106,45,0.4)', background: 'rgba(196,106,45,0.08)', color: 'rgba(196,106,45,0.8)', fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: '0 10px', whiteSpace: 'nowrap' }}
+          style={{ height: 44, borderRadius: 6, border: `1px solid var(--action-border)`, background: 'var(--action-surface)', color: 'var(--action)', fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: '0 10px', whiteSpace: 'nowrap' }}
         >
           Criar mesmo assim
         </button>
         <button
           onClick={() => onDelete(line.id)}
           title="Remover da lista"
-          style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid rgba(242,233,220,0.1)', background: 'none', color: 'rgba(242,233,220,0.3)', fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+          style={{ width: 44, height: 44, borderRadius: 6, border: `1px solid var(--border-on-primary-soft)`, background: 'none', color: 'var(--text-on-primary-faint)', fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
         >
           ×
         </button>
@@ -490,16 +490,16 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
           {step === 'preview' && (
             <button
               onClick={() => setStep('input')}
-              style={{ background: 'none', border: 'none', color: 'rgba(242,233,220,0.6)', fontSize: 20, cursor: 'pointer', padding: 0, lineHeight: 1 }}
+              style={{ background: 'none', border: 'none', color: 'var(--text-on-primary-muted)', fontSize: 20, cursor: 'pointer', padding: 0, lineHeight: 1 }}
             >
               ←
             </button>
           )}
-          <h2 style={{ fontSize: 20, fontWeight: 700, color: '#F2E9DC', margin: 0 }}>
+          <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-on-primary)', margin: 0 }}>
             {step === 'input' ? 'Importar Artigos' : 'Pré-visualização'}
           </h2>
         </div>
-        <p style={{ fontSize: 13, color: 'rgba(242,233,220,0.5)', margin: 0 }}>
+        <p style={{ fontSize: 13, color: 'var(--text-on-primary-muted)', margin: 0 }}>
           {step === 'input'
             ? 'Cola ou escreve uma lista — um produto por linha.'
             : [
@@ -512,14 +512,14 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
 
       {/* ── Error banner ── */}
       {error && (
-        <div style={{ background: 'rgba(139,46,46,0.15)', border: '1px solid rgba(139,46,46,0.4)', borderRadius: 8, padding: '10px 14px', color: '#F2E9DC', fontSize: 13, marginBottom: 16 }}>
+        <div style={{ background: 'var(--error-surface)', border: `1px solid var(--error-border)`, borderRadius: 8, padding: '10px 14px', color: 'var(--text-on-primary)', fontSize: 13, marginBottom: 16 }}>
           {error}
         </div>
       )}
 
       {/* ── Result banner (criação parcial) ── */}
       {result && result.failed.length > 0 && (
-        <div style={{ background: 'rgba(139,46,46,0.15)', border: '1px solid rgba(139,46,46,0.4)', borderRadius: 8, padding: '10px 14px', color: '#F2E9DC', fontSize: 13, marginBottom: 16 }}>
+        <div style={{ background: 'var(--error-surface)', border: `1px solid var(--error-border)`, borderRadius: 8, padding: '10px 14px', color: 'var(--text-on-primary)', fontSize: 13, marginBottom: 16 }}>
           <strong>{result.created} criado{result.created !== 1 ? 's' : ''}.</strong> Falharam: {result.failed.join(', ')}
         </div>
       )}
@@ -529,11 +529,11 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
 
         {step === 'success' && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, paddingTop: 48, paddingBottom: 48 }}>
-            <div style={{ fontSize: 32, marginBottom: 8, color: 'rgba(100,200,120,0.9)' }}>✓</div>
-            <p style={{ fontSize: 18, fontWeight: 700, color: '#F2E9DC', margin: 0 }}>
+            <div style={{ fontSize: 32, marginBottom: 8, color: 'var(--success-on-primary)' }}>✓</div>
+            <p style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-on-primary)', margin: 0 }}>
               {successCount} artigo{successCount !== 1 ? 's' : ''} criado{successCount !== 1 ? 's' : ''}
             </p>
-            <p style={{ fontSize: 13, color: 'rgba(242,233,220,0.4)', margin: 0 }}>
+            <p style={{ fontSize: 13, color: 'var(--text-on-primary-faint)', margin: 0 }}>
               com sucesso
             </p>
           </div>
@@ -543,7 +543,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div>
               <label style={labelStyle}>LISTA DE PRODUTOS</label>
-              <p style={{ fontSize: 12, color: 'rgba(242,233,220,0.4)', marginBottom: 8, lineHeight: 1.5 }}>
+              <p style={{ fontSize: 12, color: 'var(--text-on-primary-faint)', marginBottom: 8, lineHeight: 1.5 }}>
                 Exemplo:<br />
                 Tomate pelado lata 2.5kg<br />
                 Mozzarella fresca 125g<br />
@@ -566,7 +566,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
               />
             </div>
             {lineCount > 0 && (
-              <p style={{ fontSize: 12, color: 'rgba(242,233,220,0.4)', margin: 0 }}>
+              <p style={{ fontSize: 12, color: 'var(--text-on-primary-faint)', margin: 0 }}>
                 {lineCount} linha{lineCount !== 1 ? 's' : ''}
               </p>
             )}
@@ -576,7 +576,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
         {step === 'preview' && (
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {primaryLines.length === 0 && (
-              <p style={{ color: 'rgba(242,233,220,0.4)', fontSize: 14, textAlign: 'center', paddingTop: 32 }}>
+              <p style={{ color: 'var(--text-on-primary-faint)', fontSize: 14, textAlign: 'center', paddingTop: 32 }}>
                 Nenhuma linha válida. Volta atrás e revê o texto.
               </p>
             )}
@@ -584,7 +584,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
             {/* ── PRONTOS ── */}
             {okLines.length > 0 && (
               <div style={{ marginBottom: 28 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'rgba(100,200,120,0.7)', marginBottom: 10, paddingTop: 4 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--success-on-primary)', marginBottom: 10, paddingTop: 4 }}>
                   PRONTOS ({okLines.length})
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -607,7 +607,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
             {/* ── A RESOLVER ── */}
             {partialLines.length > 0 && (
               <div style={{ marginBottom: 28 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'rgba(196,106,45,0.8)', marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--action)', marginBottom: 10 }}>
                   A RESOLVER ({partialLines.length})
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -628,11 +628,11 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
             {/* ── DUPLICADOS ── */}
             {dupLines.length > 0 && (
               <div>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'rgba(242,233,220,0.35)', marginBottom: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-on-primary-faint)', marginBottom: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span>DUPLICADOS ({dupLines.length})</span>
                   <button
                     onClick={() => handleIgnoreAllDuplicates(dupLines.map(l => l.id))}
-                    style={{ fontSize: 10, fontWeight: 600, color: 'rgba(242,233,220,0.4)', background: 'none', border: '1px solid rgba(242,233,220,0.12)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer' }}
+                    style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-on-primary-faint)', background: 'none', border: `1px solid var(--border-on-primary)`, borderRadius: 4, padding: '2px 8px', cursor: 'pointer' }}
                   >
                     Ignorar todos
                   </button>
@@ -663,8 +663,8 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
                 height:       44,
                 borderRadius: 8,
                 border:       'none',
-                background:   '#1F3A2E',
-                color:        '#F2E9DC',
+                background:   'var(--primary)',
+                color:        'var(--text-on-primary)',
                 fontSize:     14,
                 fontWeight:   600,
                 cursor:       'pointer',
@@ -674,7 +674,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
             </button>
             <button
               onClick={handleContinueAdding}
-              style={{ height: 36, borderRadius: 8, border: 'none', background: 'none', color: 'rgba(242,233,220,0.5)', fontSize: 13, cursor: 'pointer' }}
+              style={{ height: 44, borderRadius: 8, border: 'none', background: 'none', color: 'var(--text-on-primary-muted)', fontSize: 13, cursor: 'pointer' }}
             >
               Continuar a adicionar
             </button>
@@ -690,8 +690,8 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
                 height:       44,
                 borderRadius: 8,
                 border:       'none',
-                background:   lineCount === 0 ? 'rgba(196,106,45,0.3)' : '#C46A2D',
-                color:        lineCount === 0 ? 'rgba(242,233,220,0.4)' : '#FFF',
+                background:   lineCount === 0 ? 'var(--action-disabled)' : 'var(--action)',
+                color:        lineCount === 0 ? 'var(--text-on-primary-faint)' : 'var(--text-on-primary)',
                 fontSize:     14,
                 fontWeight:   600,
                 cursor:       lineCount === 0 ? 'not-allowed' : 'pointer',
@@ -701,7 +701,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
             </button>
             <button
               onClick={onCancel}
-              style={{ height: 36, borderRadius: 8, border: 'none', background: 'none', color: 'rgba(242,233,220,0.5)', fontSize: 13, cursor: 'pointer' }}
+              style={{ height: 44, borderRadius: 8, border: 'none', background: 'none', color: 'var(--text-on-primary-muted)', fontSize: 13, cursor: 'pointer' }}
             >
               Cancelar
             </button>
@@ -717,8 +717,8 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
                 height:       44,
                 borderRadius: 8,
                 border:       'none',
-                background:   saving || okLines.length === 0 ? 'rgba(196,106,45,0.3)' : '#C46A2D',
-                color:        saving || okLines.length === 0 ? 'rgba(242,233,220,0.4)' : '#FFF',
+                background:   saving || okLines.length === 0 ? 'var(--action-disabled)' : 'var(--action)',
+                color:        saving || okLines.length === 0 ? 'var(--text-on-primary-faint)' : 'var(--text-on-primary)',
                 fontSize:     14,
                 fontWeight:   600,
                 cursor:       saving ? 'wait' : okLines.length === 0 ? 'not-allowed' : 'pointer',
@@ -727,14 +727,14 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
               {saving ? 'A criar…' : `Criar ${okLines.length} artigo${okLines.length !== 1 ? 's' : ''}`}
             </button>
             {!saving && ignoredCount > 0 && (
-              <p style={{ fontSize: 11, color: 'rgba(242,233,220,0.3)', textAlign: 'center', margin: 0 }}>
+              <p style={{ fontSize: 11, color: 'var(--text-on-primary-faint)', textAlign: 'center', margin: 0 }}>
                 {ignoredCount} ignorado{ignoredCount !== 1 ? 's' : ''}{partialLines.length > 0 && dupLines.length > 0 ? ` (${partialLines.length} incompleto${partialLines.length !== 1 ? 's' : ''} · ${dupLines.length} duplicado${dupLines.length !== 1 ? 's' : ''})` : ''}
               </p>
             )}
             <button
               onClick={onCancel}
               disabled={saving}
-              style={{ height: 36, borderRadius: 8, border: 'none', background: 'none', color: 'rgba(242,233,220,0.5)', fontSize: 13, cursor: saving ? 'not-allowed' : 'pointer' }}
+              style={{ height: 44, borderRadius: 8, border: 'none', background: 'none', color: 'var(--text-on-primary-muted)', fontSize: 13, cursor: saving ? 'not-allowed' : 'pointer' }}
             >
               Cancelar
             </button>

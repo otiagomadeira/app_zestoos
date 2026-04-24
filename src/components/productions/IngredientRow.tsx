@@ -27,12 +27,12 @@ interface Props {
 
 const inputStyle: React.CSSProperties = {
   background:   'var(--bg)',
-  border:       '1px solid rgba(28,20,10,0.18)',
+  border:       '1px solid var(--border)',
   borderRadius: 6,
   color:        'var(--text)',
   fontSize:     13,
   outline:      'none',
-  height:       34,
+  height:       44,
   padding:      '0 8px',
 }
 
@@ -101,13 +101,13 @@ export default function IngredientRow({ value, index, articles, productions, con
       {/* Tipo + selector */}
       <div style={{ display: 'flex', gap: 8 }}>
         {/* Tipo toggle */}
-        <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid rgba(28,20,10,0.15)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: `1px solid var(--border)`, flexShrink: 0 }}>
           {(['article', 'production'] as IngredientType[]).map(t => (
             <button
               key={t}
               onClick={() => handleTypeChange(t)}
               style={{
-                height:     30,
+                height:     44,
                 padding:    '0 10px',
                 border:     'none',
                 background: value.type === t ? 'var(--primary)' : 'transparent',
@@ -154,12 +154,12 @@ export default function IngredientRow({ value, index, articles, productions, con
         <button
           onClick={() => onRemove(index)}
           style={{
-            width:        30,
-            height:       34,
+            width:        44,
+            height:       44,
             borderRadius: 6,
-            border:       '1px solid rgba(239,68,68,0.3)',
-            background:   'rgba(239,68,68,0.06)',
-            color:        '#EF4444',
+            border:       `1px solid var(--error-border)`,
+            background:   'var(--error-surface)',
+            color:        'var(--error)',
             fontSize:     16,
             cursor:       'pointer',
             display:      'flex',

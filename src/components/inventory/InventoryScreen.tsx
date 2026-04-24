@@ -227,10 +227,10 @@ export default function InventoryScreen() {
   }
 
   return (
-    <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
 
       {/* Header */}
-      <div style={{ padding: '16px 20px 12px', borderBottom: '1px solid rgba(28,20,10,0.1)', flexShrink: 0 }}>
+      <div style={{ padding: '16px 20px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <div>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>Contagem de Stock</h2>
@@ -241,9 +241,9 @@ export default function InventoryScreen() {
           </div>
           {dirtyCount > 0 && (
             <span style={{
-              background:    'rgba(184,134,11,0.1)',
-              border:        '1px solid #B8860B',
-              color:         '#A07010',
+              background:    'var(--warning-surface)',
+              border:        `1px solid var(--warning-border)`,
+              color:         'var(--warning-text)',
               fontSize:      11,
               fontWeight:    600,
               padding:       '3px 8px',
@@ -263,7 +263,7 @@ export default function InventoryScreen() {
             width:      '100%',
             height:     40,
             background: 'var(--surface)',
-            border:     '1px solid rgba(28,20,10,0.15)',
+            border:     '1px solid var(--border)',
             borderRadius: 8,
             padding:    '0 12px',
             color:      'var(--text)',
@@ -287,7 +287,7 @@ export default function InventoryScreen() {
         boxSizing:     'border-box',
       }}>
         {error && (
-          <div style={{ background: 'rgba(139,46,46,0.08)', border: '1px solid var(--error)', borderRadius: 8, padding: '10px 14px', color: 'var(--error)', fontSize: 13 }}>
+          <div style={{ background: 'var(--error-surface)', border: '1px solid var(--error-border)', borderRadius: 8, padding: '10px 14px', color: 'var(--error)', fontSize: 13 }}>
             {error}
           </div>
         )}
@@ -309,8 +309,8 @@ export default function InventoryScreen() {
             <div key={id}>
               {saveSuccess === id && (
                 <div style={{
-                  background:   'rgba(85,107,71,0.12)',
-                  border:       '1px solid rgba(85,107,71,0.4)',
+                  background:   'var(--success-surface)',
+                  border:       '1px solid var(--success-border)',
                   borderRadius: 8,
                   padding:      '8px 14px',
                   color:        'var(--success)',
@@ -324,8 +324,8 @@ export default function InventoryScreen() {
               )}
               {saveNoChange === id && (
                 <div style={{
-                  background:   'rgba(28,20,10,0.05)',
-                  border:       '1px solid rgba(28,20,10,0.15)',
+                  background:   'var(--surface)',
+                  border:       '1px solid var(--border)',
                   borderRadius: 8,
                   padding:      '8px 14px',
                   color:        'var(--text-subtle)',

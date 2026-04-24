@@ -41,7 +41,7 @@ const emptyLink = (): LinkRow => ({
 
 const labelStyle: React.CSSProperties = {
   fontSize:      11,
-  color:         'rgba(242,233,220,0.55)',
+  color:         'var(--text-on-primary-muted)',
   letterSpacing: '0.06em',
   marginBottom:  4,
   display:       'block',
@@ -51,7 +51,7 @@ const inputStyle: React.CSSProperties = {
   width:        '100%',
   height:       40,
   background:   'var(--bg)',
-  border:       '1px solid rgba(28,20,10,0.18)',
+  border:       '1px solid var(--border)',
   borderRadius: 8,
   padding:      '0 12px',
   color:        'var(--text)',
@@ -61,9 +61,9 @@ const inputStyle: React.CSSProperties = {
 
 const cellInput: React.CSSProperties = {
   width:        '100%',
-  height:       32,
+  height:       44,
   background:   'var(--bg)',
-  border:       '1px solid rgba(28,20,10,0.18)',
+  border:       '1px solid var(--border)',
   borderRadius: 6,
   padding:      '0 8px',
   color:        'var(--text)',
@@ -188,11 +188,11 @@ export default function ArticleForm({ existing, onSaved, onCancel }: Props) {
       <div style={{ marginBottom: 20, flexShrink: 0 }}>
         <button
           onClick={onCancel}
-          style={{ background: 'none', border: 'none', color: 'rgba(242,233,220,0.5)', fontSize: 13, cursor: 'pointer', padding: 0, marginBottom: 12 }}
+          style={{ background: 'none', border: 'none', color: 'var(--text-on-primary-muted)', fontSize: 13, cursor: 'pointer', padding: 0, marginBottom: 12 }}
         >
           ← Cancelar
         </button>
-        <p style={{ fontSize: 11, color: 'rgba(242,233,220,0.45)', letterSpacing: '0.08em', marginBottom: 4 }}>
+        <p style={{ fontSize: 11, color: 'var(--text-on-primary-subtle)', letterSpacing: '0.08em', marginBottom: 4 }}>
           {isEdit ? 'EDITAR ARTIGO' : 'NOVO ARTIGO'}
         </p>
         <h3 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-on-primary)' }}>
@@ -220,7 +220,7 @@ export default function ArticleForm({ existing, onSaved, onCancel }: Props) {
               <button
                 type="button"
                 onClick={() => setCategory(suggestion)}
-                style={{ marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 5, background: 'rgba(160,112,16,0.12)', border: '1px solid rgba(160,112,16,0.35)', borderRadius: 6, padding: '3px 10px', color: 'rgba(242,233,220,0.75)', fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', cursor: 'pointer' }}
+                style={{ marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 5, background: 'var(--warning-surface)', border: `1px solid var(--warning-border)`, borderRadius: 6, padding: '3px 10px', color: 'var(--text-on-primary-muted)', fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', cursor: 'pointer' }}
               >
                 Sugestão: {suggestion} → aplicar
               </button>
@@ -279,7 +279,7 @@ export default function ArticleForm({ existing, onSaved, onCancel }: Props) {
 
         {/* Supplier links */}
         <div>
-          <p style={{ fontSize: 11, color: 'rgba(242,233,220,0.45)', letterSpacing: '0.08em', marginBottom: 8 }}>
+          <p style={{ fontSize: 11, color: 'var(--text-on-primary-subtle)', letterSpacing: '0.08em', marginBottom: 8 }}>
             FORNECEDORES
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -301,14 +301,14 @@ export default function ArticleForm({ existing, onSaved, onCancel }: Props) {
                   <select
                     value={link.supplier_id}
                     onChange={e => updateLink(link.key, { supplier_id: e.target.value })}
-                    style={{ flex: 1, height: 34, background: 'var(--bg)', border: '1px solid rgba(28,20,10,0.18)', borderRadius: 6, color: 'var(--text)', fontSize: 13, padding: '0 8px', outline: 'none', cursor: 'pointer' }}
+                    style={{ flex: 1, height: 44, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', fontSize: 13, padding: '0 8px', outline: 'none', cursor: 'pointer' }}
                   >
                     <option value="">Selecionar fornecedor…</option>
                     {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                   <button
                     onClick={() => removeLink(link.key)}
-                    style={{ width: 30, height: 34, borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.06)', color: '#EF4444', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+                    style={{ width: 44, height: 44, borderRadius: 6, border: `1px solid var(--error-border)`, background: 'var(--error-surface)', color: 'var(--error)', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                   >×</button>
                 </div>
 
@@ -371,14 +371,14 @@ export default function ArticleForm({ existing, onSaved, onCancel }: Props) {
                   <button
                     onClick={() => setPreferred(link.key)}
                     style={{
-                      height:        32,
+                      height:        44,
                       padding:       '0 10px',
                       borderRadius:  6,
                       flexShrink:    0,
                       border:        link.is_preferred
-                        ? '1px solid rgba(85,107,71,0.5)'
-                        : '1px solid rgba(28,20,10,0.15)',
-                      background:    link.is_preferred ? 'rgba(85,107,71,0.12)' : 'transparent',
+                        ? '1px solid var(--success-border)'
+                        : `1px solid var(--border)`,
+                      background:    link.is_preferred ? 'var(--success-surface)' : 'transparent',
                       color:         link.is_preferred ? 'var(--success)' : 'var(--text-subtle)',
                       fontSize:      11,
                       fontWeight:    600,
@@ -395,7 +395,7 @@ export default function ArticleForm({ existing, onSaved, onCancel }: Props) {
 
           <button
             onClick={() => setLinks(prev => [...prev, emptyLink()])}
-            style={{ width: '100%', height: 38, marginTop: 8, borderRadius: 8, border: '1px dashed rgba(242,233,220,0.2)', background: 'transparent', color: 'rgba(242,233,220,0.5)', fontSize: 13, cursor: 'pointer' }}
+            style={{ width: '100%', height: 44, marginTop: 8, borderRadius: 8, border: `1px dashed var(--border-on-primary-medium)`, background: 'transparent', color: 'var(--text-on-primary-muted)', fontSize: 13, cursor: 'pointer' }}
           >
             + Adicionar Fornecedor
           </button>
@@ -403,21 +403,21 @@ export default function ArticleForm({ existing, onSaved, onCancel }: Props) {
 
         {/* Deactivate */}
         {isEdit && (
-          <div style={{ paddingTop: 16, borderTop: '1px solid rgba(242,233,220,0.1)' }}>
+          <div style={{ paddingTop: 16, borderTop: `1px solid var(--border-on-primary-soft)` }}>
             <button
               onClick={handleToggleActive}
               disabled={saving}
               style={{
                 width:        '100%',
-                height:       40,
+                height:       44,
                 borderRadius: 8,
                 border:       existing.is_active
-                  ? '1px solid rgba(239,68,68,0.4)'
-                  : '1px solid rgba(85,107,71,0.4)',
+                  ? `1px solid var(--error-border)`
+                  : '1px solid var(--success-border)',
                 background:   existing.is_active
-                  ? 'rgba(239,68,68,0.06)'
-                  : 'rgba(85,107,71,0.06)',
-                color:        existing.is_active ? '#EF4444' : 'var(--success)',
+                  ? 'var(--error-surface)'
+                  : 'var(--success-surface)',
+                color:        existing.is_active ? 'var(--error)' : 'var(--success)',
                 fontSize:     13,
                 fontWeight:   600,
                 cursor:       'pointer',
@@ -429,24 +429,24 @@ export default function ArticleForm({ existing, onSaved, onCancel }: Props) {
         )}
 
         {error && (
-          <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: 8, padding: '10px 14px', color: '#FCA5A5', fontSize: 13 }}>
+          <div style={{ background: 'var(--error-surface)', border: `1px solid var(--error-border)`, borderRadius: 8, padding: '10px 14px', color: 'var(--error-on-primary)', fontSize: 13 }}>
             {error}
           </div>
         )}
       </div>
 
       {/* Footer */}
-      <div style={{ paddingTop: 16, borderTop: '1px solid rgba(242,233,220,0.1)', marginTop: 16, display: 'flex', gap: 10, flexShrink: 0 }}>
+      <div style={{ paddingTop: 16, borderTop: `1px solid var(--border-on-primary-soft)`, marginTop: 16, display: 'flex', gap: 10, flexShrink: 0 }}>
         <button
           onClick={onCancel}
-          style={{ flex: 1, height: 48, borderRadius: 10, border: '1px solid rgba(242,233,220,0.15)', background: 'transparent', color: 'rgba(242,233,220,0.6)', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}
+          style={{ flex: 1, height: 48, borderRadius: 10, border: `1px solid var(--border-on-primary)`, background: 'transparent', color: 'var(--text-on-primary-muted)', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}
         >
           Cancelar
         </button>
         <button
           onClick={handleSave}
           disabled={saving}
-          style={{ flex: 2, height: 48, borderRadius: 10, border: 'none', background: 'var(--action)', color: '#FFFFFF', fontSize: 15, fontWeight: 600, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1 }}
+          style={{ flex: 2, height: 48, borderRadius: 10, border: 'none', background: 'var(--action)', color: 'var(--text-on-primary)', fontSize: 15, fontWeight: 600, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1 }}
         >
           {saving ? 'A guardar…' : isEdit ? 'Guardar Alterações' : 'Guardar Artigo'}
         </button>

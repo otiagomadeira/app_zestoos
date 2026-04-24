@@ -10,12 +10,12 @@ export default function EncomendasPage() {
   const [tab, setTab] = useState<Tab>('sugestoes')
 
   return (
-    <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
 
       {/* Tab bar */}
       <div style={{
         display:       'flex',
-        borderBottom:  '1px solid rgba(28,20,10,0.1)',
+        borderBottom:  '1px solid var(--border)',
         background:    'var(--bg)',
         flexShrink:    0,
         padding:       '0 16px',
@@ -48,7 +48,7 @@ export default function EncomendasPage() {
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
+      <div style={{ flex: 1, overflow: 'hidden' }}>
         {tab === 'sugestoes'  && <OrderSuggestionScreen />}
         {tab === 'encomendas' && <OrderListScreen />}
       </div>

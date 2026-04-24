@@ -7,8 +7,8 @@ import { signUp } from '../actions'
 const inputStyle: React.CSSProperties = {
   width:        '100%',
   height:       48,
-  background:   '#FFFFFF',
-  border:       '1px solid rgba(28,20,10,0.18)',
+  background:   'var(--white)',
+  border:       '1px solid var(--border)',
   borderRadius: 10,
   padding:      '0 16px',
   color:        'var(--text)',
@@ -55,8 +55,8 @@ export default function RegisterPage() {
           </span>
         </div>
 
-        <div style={{ background: '#FFFFFF', borderRadius: 16, padding: '32px 28px', boxShadow: '0 4px 24px rgba(28,20,10,0.08)', textAlign: 'center' }}>
-          <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(31,58,46,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
+        <div style={{ background: 'var(--white)', borderRadius: 16, padding: '32px 28px', boxShadow: '0 4px 24px rgba(28,20,10,0.08)', textAlign: 'center' }}>
+          <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--primary-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
             <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
               <path d="M22 6C22 4.9 21.1 4 20 4H4C2.9 4 2 4.9 2 6V18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V6ZM20 6L12 13L4 6H20ZM20 18H4V8L12 15L20 8V18Z" fill="var(--primary)"/>
             </svg>
@@ -103,7 +103,7 @@ export default function RegisterPage() {
       </div>
 
       {/* Card */}
-      <div style={{ background: '#FFFFFF', borderRadius: 16, padding: '32px 28px', boxShadow: '0 4px 24px rgba(28,20,10,0.08)' }}>
+      <div style={{ background: 'var(--white)', borderRadius: 16, padding: '32px 28px', boxShadow: '0 4px 24px rgba(28,20,10,0.08)' }}>
         <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
           Registar restaurante
         </h2>
@@ -155,7 +155,7 @@ export default function RegisterPage() {
           </div>
 
           {error && (
-            <div style={{ background: 'rgba(139,46,46,0.08)', border: '1px solid rgba(139,46,46,0.3)', borderRadius: 8, padding: '10px 14px', color: 'var(--error)', fontSize: 13 }}>
+            <div style={{ background: 'var(--error-surface)', border: '1px solid var(--error-border)', borderRadius: 8, padding: '10px 14px', color: 'var(--error)', fontSize: 13 }}>
               {error}
             </div>
           )}

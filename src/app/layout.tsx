@@ -36,7 +36,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="pt" style={{ height: '100%' }} className={`${playfair.variable} ${montserrat.variable} ${jetbrainsMono.variable}`}>
-      <body style={{ height: '100%', background: '#F2E9DC' }}>
+      <body style={{ height: '100%', background: 'var(--bg)' }}>
         {children}
       </body>
     </html>

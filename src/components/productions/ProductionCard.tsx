@@ -17,7 +17,7 @@ export default function ProductionCard({ production, isSelected, onClick }: Prod
       style={{
         width:         '100%',
         minHeight:     68,
-        background:    isSelected ? 'rgba(196,106,45,0.08)' : 'var(--surface)',
+        background:    isSelected ? 'var(--action-surface)' : 'var(--surface)',
         border:        `1px solid ${isSelected ? 'var(--action)' : 'var(--border)'}`,
         borderRadius:  12,
         padding:       '12px 16px',
@@ -49,7 +49,7 @@ export default function ProductionCard({ production, isSelected, onClick }: Prod
             fontFamily:  'JetBrains Mono, monospace',
             fontSize:    13,
             fontWeight:  600,
-            color:       'var(--action)',
+            color:       'var(--text-muted)',
             flexShrink:  0,
             marginLeft:  12,
           }}>
@@ -76,7 +76,7 @@ export default function ProductionCard({ production, isSelected, onClick }: Prod
           <span style={{
             fontSize:      10,
             fontWeight:    600,
-            color:         'var(--action-hover)',
+            color:         'var(--error)',
             letterSpacing: '0.05em',
           }}>
             SEM STOCK

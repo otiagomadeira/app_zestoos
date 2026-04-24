@@ -59,8 +59,8 @@ export default function ArticleCard({
     <div
       style={{
         width:        '100%',
-        background:   isExpanded ? 'rgba(196,106,45,0.06)' : isSelected ? 'rgba(196,106,45,0.04)' : 'var(--surface)',
-        border:       `1px solid ${isExpanded ? 'var(--action)' : isDirty ? '#B8860B' : 'var(--border)'}`,
+        background:   isExpanded ? 'var(--action-surface)' : isSelected ? 'var(--action-surface)' : 'var(--surface)',
+        border:       `1px solid ${isExpanded ? 'var(--action)' : isDirty ? 'var(--warning)' : 'var(--border)'}`,
         borderRadius: 12,
         overflow:     'hidden',
         transition:   'all 0.15s',
@@ -113,7 +113,7 @@ export default function ArticleCard({
               fontFamily: 'JetBrains Mono, monospace',
               fontSize:   20,
               fontWeight: 700,
-              color:      isDirty ? '#A07010' : statusColor,
+              color:      isDirty ? 'var(--warning-text)' : statusColor,
             }}>
               {formatStockQty(article.current_qty, article.stock_unit)}
             </span>
@@ -121,7 +121,7 @@ export default function ArticleCard({
         </div>
 
         {/* Progress bar */}
-        <div style={{ height: 3, borderRadius: 2, background: 'rgba(28,20,10,0.1)', overflow: 'hidden' }}>
+        <div style={{ height: 3, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
           <div style={{
             height:     '100%',
             width:      `${pct}%`,
@@ -145,7 +145,7 @@ export default function ArticleCard({
             </span>
           )}
           {isDirty && (
-            <span style={{ fontSize: 10, color: '#A07010', fontWeight: 600, letterSpacing: '0.05em' }}>
+            <span style={{ fontSize: 10, color: 'var(--warning-text)', fontWeight: 600, letterSpacing: '0.05em' }}>
               ALTERADO
             </span>
           )}
@@ -157,7 +157,7 @@ export default function ArticleCard({
         <div
           style={{
             padding:    '0 16px 14px',
-            borderTop:  '1px solid rgba(28,20,10,0.1)',
+            borderTop:  '1px solid var(--border)',
             paddingTop: 12,
             marginTop:  -2,
           }}
@@ -197,7 +197,7 @@ export default function ArticleCard({
                     width:        52,
                     height:       40,
                     background:   'var(--bg)',
-                    border:       '1px solid rgba(28,20,10,0.2)',
+                    border:       '1px solid var(--border)',
                     borderRadius: 8,
                     padding:      '0 6px',
                     fontSize:     16,
@@ -248,8 +248,8 @@ export default function ArticleCard({
                 padding:      '0 16px',
                 borderRadius: 8,
                 border:       'none',
-                background:   (isSaving || totalUnits === 0) ? 'rgba(196,106,45,0.35)' : 'var(--action)',
-                color:        '#FFFFFF',
+                background:   (isSaving || totalUnits === 0) ? 'var(--action-disabled)' : 'var(--action)',
+                color:        'var(--text-on-primary)',
                 fontSize:     14,
                 fontWeight:   700,
                 cursor:       (isSaving || totalUnits === 0) ? 'default' : 'pointer',
@@ -270,7 +270,7 @@ export default function ArticleCard({
             display:    'flex',
             alignItems: 'center',
             gap:        8,
-            borderTop:  '1px solid rgba(28,20,10,0.1)',
+            borderTop:  '1px solid var(--border)',
             paddingTop: 12,
             marginTop:  -2,
           }}
@@ -298,7 +298,7 @@ export default function ArticleCard({
               flex:         1,
               height:       40,
               background:   'var(--bg)',
-              border:       '1px solid rgba(28,20,10,0.2)',
+              border:       '1px solid var(--border)',
               borderRadius: 8,
               padding:      '0 10px',
               fontSize:     16,
@@ -320,8 +320,8 @@ export default function ArticleCard({
               height:       40,
               borderRadius: 8,
               border:       'none',
-              background:   isSaving ? 'rgba(196,106,45,0.4)' : 'var(--action)',
-              color:        '#FFFFFF',
+              background:   isSaving ? 'var(--action-disabled)' : 'var(--action)',
+              color:        'var(--text-on-primary)',
               fontSize:     18,
               fontWeight:   700,
               cursor:       isSaving ? 'default' : 'pointer',
@@ -343,7 +343,7 @@ const stepperBtn: React.CSSProperties = {
   width:        40,
   height:       40,
   borderRadius: 8,
-  border:       '1px solid rgba(28,20,10,0.15)',
+  border:       '1px solid var(--border)',
   background:   'var(--surface)',
   color:        'var(--text)',
   fontSize:     20,

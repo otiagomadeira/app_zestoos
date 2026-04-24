@@ -169,10 +169,12 @@ export default function OrderSuggestionScreen() {
   }
 
   return (
-    <div style={{ maxWidth: 720, margin: '0 auto', padding: '0 16px 120px' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ flex: 1, overflowY: 'auto' }}>
+    <div style={{ maxWidth: 720, margin: '0 auto', padding: '0 16px 24px' }}>
 
       {/* Header */}
-      <div style={{ padding: '20px 0 16px', borderBottom: '1px solid rgba(28,20,10,0.1)', marginBottom: 20 }}>
+      <div style={{ padding: '20px 0 16px', borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
         <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>
           Sugestão de Encomenda
         </h2>
@@ -184,8 +186,8 @@ export default function OrderSuggestionScreen() {
       {/* Banners */}
       {error && (
         <div style={{
-          background: 'rgba(239,68,68,0.08)', border: '1px solid #EF4444',
-          borderRadius: 8, padding: '12px 16px', color: '#C0392B',
+          background: 'var(--error-surface)', border: '1px solid var(--error-border)',
+          borderRadius: 8, padding: '12px 16px', color: 'var(--error)',
           fontSize: 13, marginBottom: 16,
         }}>
           {error}
@@ -193,7 +195,7 @@ export default function OrderSuggestionScreen() {
       )}
       {success && (
         <div style={{
-          background: 'rgba(85,107,71,0.1)', border: '1px solid rgba(85,107,71,0.4)',
+          background: 'var(--success-surface)', border: '1px solid var(--success-border)',
           borderRadius: 8, padding: '12px 16px', color: 'var(--success)',
           fontSize: 13, fontWeight: 600, marginBottom: 16, textAlign: 'center',
         }}>
@@ -203,11 +205,11 @@ export default function OrderSuggestionScreen() {
 
       {noSupplierSelected.length > 0 && (
         <div style={{
-          background:   'rgba(184,134,11,0.08)',
-          border:       '1px solid rgba(184,134,11,0.4)',
+          background:   'var(--warning-surface)',
+          border:       '1px solid var(--warning-border)',
           borderRadius: 8,
           padding:      '10px 14px',
-          color:        '#A07010',
+          color:        'var(--warning-text)',
           fontSize:     13,
           marginBottom: 16,
         }}>
@@ -221,7 +223,7 @@ export default function OrderSuggestionScreen() {
 
       {suggestions.length === 0 && !loading && (
         <div style={{
-          background: 'rgba(85,107,71,0.06)', border: '1px solid rgba(85,107,71,0.3)',
+          background: 'var(--success-surface)', border: '1px solid var(--success-border)',
           borderRadius: 12, padding: '32px 24px', textAlign: 'center',
         }}>
           <p style={{ fontSize: 32, marginBottom: 12 }}>✓</p>
@@ -244,7 +246,7 @@ export default function OrderSuggestionScreen() {
           }}>
             <div style={{
               width: 6, height: 6, borderRadius: '50%',
-              background: 'var(--action)', flexShrink: 0,
+              background: 'var(--text-muted)', flexShrink: 0,
             }} />
             <span style={{
               fontSize: 12, fontWeight: 600, color: 'var(--text-subtle)',
@@ -252,7 +254,7 @@ export default function OrderSuggestionScreen() {
             }}>
               {group.name}
             </span>
-            <div style={{ flex: 1, height: 1, background: 'rgba(28,20,10,0.1)' }} />
+            <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
           </div>
 
           {/* Items */}
@@ -266,7 +268,7 @@ export default function OrderSuggestionScreen() {
                 <div
                   key={s.article_id}
                   style={{
-                    background:   isSelected ? 'rgba(196,106,45,0.06)' : 'var(--surface)',
+                    background:   isSelected ? 'var(--action-surface)' : 'var(--surface)',
                     border:       `1px solid ${isSelected ? 'var(--action)' : 'var(--border)'}`,
                     borderRadius: 12,
                     padding:      '14px 16px',
@@ -279,11 +281,11 @@ export default function OrderSuggestionScreen() {
                       <button
                         onClick={() => toggleItem(s.article_id, s.order_qty_in_order_unit ?? 1)}
                         style={{
-                          width:          24,
-                          height:         24,
-                          minWidth:       24,
-                          borderRadius:   6,
-                          border:         `2px solid ${isSelected ? 'var(--action)' : 'rgba(28,20,10,0.2)'}`,
+                          width:          44,
+                          height:         44,
+                          minWidth:       44,
+                          borderRadius:   8,
+                          border:         `2px solid ${isSelected ? 'var(--action)' : 'var(--border)'}`,
                           background:     isSelected ? 'var(--action)' : 'transparent',
                           cursor:         'pointer',
                           display:        'flex',
@@ -295,7 +297,7 @@ export default function OrderSuggestionScreen() {
                       >
                         {isSelected && (
                           <svg width="12" height="10" viewBox="0 0 12 10" fill="none">
-                            <path d="M1 5L4.5 8.5L11 1.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            <path d="M1 5L4.5 8.5L11 1.5" stroke="var(--text-on-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                           </svg>
                         )}
                       </button>
@@ -307,7 +309,7 @@ export default function OrderSuggestionScreen() {
                             Stock:{' '}
                             <span style={{
                               fontFamily: 'JetBrains Mono, monospace',
-                              color: s.current_qty <= 0 ? '#EF4444' : '#A07010',
+                              color: s.current_qty <= 0 ? 'var(--error)' : 'var(--warning-text)',
                             }}>
                               {formatStockQty(s.current_qty, s.unit)}
                             </span>
@@ -343,12 +345,12 @@ export default function OrderSuggestionScreen() {
                           onClick={() => updateQty(s.article_id, -1)}
                           disabled={!isSelected}
                           style={{
-                            width: 32, height: 32, minHeight: 44,
-                            borderRadius: 6, border: '1px solid rgba(28,20,10,0.15)',
+                            width: 44, height: 44,
+                            borderRadius: 8, border: '1px solid var(--border)',
                             background: 'var(--surface-2)', color: 'var(--text-muted)',
                             cursor: isSelected ? 'pointer' : 'default',
                             opacity: isSelected ? 1 : 0.3,
-                            fontSize: 18, display: 'flex',
+                            fontSize: 20, display: 'flex',
                             alignItems: 'center', justifyContent: 'center',
                           }}
                         >−</button>
@@ -368,12 +370,12 @@ export default function OrderSuggestionScreen() {
                           onClick={() => updateQty(s.article_id, +1)}
                           disabled={!isSelected}
                           style={{
-                            width: 32, height: 32, minHeight: 44,
-                            borderRadius: 6, border: '1px solid rgba(28,20,10,0.15)',
+                            width: 44, height: 44,
+                            borderRadius: 8, border: '1px solid var(--border)',
                             background: 'var(--surface-2)', color: 'var(--text-muted)',
                             cursor: isSelected ? 'pointer' : 'default',
                             opacity: isSelected ? 1 : 0.3,
-                            fontSize: 18, display: 'flex',
+                            fontSize: 20, display: 'flex',
                             alignItems: 'center', justifyContent: 'center',
                           }}
                         >+</button>
@@ -400,21 +402,19 @@ export default function OrderSuggestionScreen() {
         </div>
       ))}
 
-      {/* ── Floating action bar ───────────────────────────────── */}
+    </div>
+    </div>
+
+      {/* ── Action bar ─────────────────────────────────────────── */}
       {suggestions.length > 0 && (
         <div style={{
-          position:       'fixed',
-          bottom:         0,
-          left:           0,
-          right:          0,
+          flexShrink:     0,
           background:     'var(--primary)',
-          borderTop:      'none',
           padding:        '16px 20px',
           display:        'flex',
           alignItems:     'center',
           justifyContent: 'space-between',
           gap:            16,
-          zIndex:         100,
         }}>
           <div>
             <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-on-primary)' }}>
@@ -425,7 +425,7 @@ export default function OrderSuggestionScreen() {
                 fontFamily: 'JetBrains Mono, monospace',
                 fontSize:   16,
                 fontWeight: 700,
-                color:      'var(--action)',
+                color:      'var(--text-on-primary)',
                 marginTop:  2,
               }}>
                 {totalValue.toFixed(2)} €
@@ -442,8 +442,8 @@ export default function OrderSuggestionScreen() {
               padding:        '0 24px',
               borderRadius:   10,
               border:         'none',
-              background:     selectedCount === 0 ? 'rgba(242,233,220,0.1)' : 'var(--action)',
-              color:          selectedCount === 0 ? 'rgba(242,233,220,0.3)' : '#FFFFFF',
+              background:     selectedCount === 0 ? 'var(--border-on-primary-soft)' : 'var(--action)',
+              color:          selectedCount === 0 ? 'var(--text-on-primary-faint)' : 'var(--text-on-primary)',
               fontSize:       15,
               fontWeight:     600,
               cursor:         selectedCount === 0 ? 'default' : 'pointer',

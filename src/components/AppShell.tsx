@@ -3,18 +3,20 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { useIsMobile } from '@/hooks/useIsMobile'
 
 const NAV_ITEMS = [
-  { href: '/',             label: 'Inventário',   icon: IconInventory   },
-  { href: '/encomendas',   label: 'Encomendas',   icon: IconOrders      },
-  { href: '/producoes',    label: 'Produções',    icon: IconProductions },
-  { href: '/artigos',      label: 'Artigos',      icon: IconArticles    },
-  { href: '/fornecedores', label: 'Fornecedores', icon: IconSuppliers   },
+  { href: '/',             label: 'Inventário',   mobileLabel: 'Stock',        icon: IconInventory   },
+  { href: '/encomendas',   label: 'Encomendas',   mobileLabel: 'Encomendas',   icon: IconOrders      },
+  { href: '/producoes',    label: 'Produções',    mobileLabel: 'Produções',    icon: IconProductions },
+  { href: '/artigos',      label: 'Artigos',      mobileLabel: 'Artigos',      icon: IconArticles    },
+  { href: '/fornecedores', label: 'Fornecedores', mobileLabel: 'Fornecedores', icon: IconSuppliers   },
 ]
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname()
-  const router   = useRouter()
+  const pathname  = usePathname()
+  const router    = useRouter()
+  const isMobile  = useIsMobile()
 
   const handleSignOut = async () => {
     const supabase = createClient()
@@ -22,6 +24,109 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     router.push('/login')
   }
 
+  if (isMobile) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh', background: 'var(--bg)' }}>
+        {/* ── Mobile header ─────────────────────────────────── */}
+        <header style={{
+          height:       56,
+          background:   'var(--primary)',
+          display:      'flex',
+          alignItems:   'center',
+          padding:      '0 16px',
+          flexShrink:   0,
+          gap:          10,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+            <div style={{
+              width:          24,
+              height:         24,
+              borderRadius:   5,
+              background:     'var(--action)',
+              display:        'flex',
+              alignItems:     'center',
+              justifyContent: 'center',
+            }}>
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                <path d="M8 2L14 5V11L8 14L2 11V5L8 2Z" stroke="white" strokeWidth="1.5" strokeLinejoin="round"/>
+                <circle cx="8" cy="8" r="2" fill="white"/>
+              </svg>
+            </div>
+            <span style={{
+              fontFamily:    'JetBrains Mono, monospace',
+              fontSize:      13,
+              fontWeight:    700,
+              color:         'var(--text-on-primary)',
+              letterSpacing: '0.05em',
+            }}>
+              ZESTO OS
+            </span>
+          </div>
+          <button
+            onClick={handleSignOut}
+            style={{
+              height:       44,
+              padding:      '0 12px',
+              borderRadius: 6,
+              border:       '1px solid var(--border-on-primary)',
+              background:   'transparent',
+              color:        'var(--text-on-primary-muted)',
+              fontSize:     12,
+              cursor:       'pointer',
+            }}
+          >
+            Sair
+          </button>
+        </header>
+
+        {/* ── Content ───────────────────────────────────────── */}
+        <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          {children}
+        </main>
+
+        {/* ── Bottom tab nav ────────────────────────────────── */}
+        <nav style={{
+          height:              56,
+          background:          'var(--primary)',
+          display:             'grid',
+          gridTemplateColumns: 'repeat(5, 1fr)',
+          flexShrink:          0,
+          borderTop:           '1px solid var(--border-on-primary-soft)',
+        }}>
+          {NAV_ITEMS.map(item => {
+            const active = pathname === item.href
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                style={{
+                  display:        'flex',
+                  flexDirection:  'column',
+                  alignItems:     'center',
+                  justifyContent: 'center',
+                  gap:            3,
+                  minHeight:      44,
+                  color:          active ? 'var(--action)' : 'var(--text-on-primary-muted)',
+                  textDecoration: 'none',
+                  fontSize:       9,
+                  fontWeight:     active ? 700 : 400,
+                  letterSpacing:  '0.03em',
+                  background:     active ? 'var(--action-surface-strong)' : 'transparent',
+                  borderRadius:   0,
+                  transition:     'color 0.15s',
+                }}
+              >
+                <item.icon size={18} />
+                {item.mobileLabel}
+              </Link>
+            )
+          })}
+        </nav>
+      </div>
+    )
+  }
+
+  // ── Desktop ────────────────────────────────────────────────────
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg)' }}>
       {/* ── Top bar ─────────────────────────────────────────── */}
@@ -38,12 +143,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
           <div style={{
-            width:        28,
-            height:       28,
-            borderRadius: 6,
-            background:   'var(--action)',
-            display:      'flex',
-            alignItems:   'center',
+            width:          28,
+            height:         28,
+            borderRadius:   6,
+            background:     'var(--action)',
+            display:        'flex',
+            alignItems:     'center',
             justifyContent: 'center',
           }}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -74,16 +179,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   display:        'flex',
                   alignItems:     'center',
                   gap:            6,
-                  height:         36,
+                  height:         44,
                   padding:        '0 14px',
                   borderRadius:   8,
-                  background:     active ? 'rgba(196,106,45,0.2)' : 'transparent',
-                  color:          active ? 'var(--action)' : 'rgba(242,233,220,0.6)',
+                  background:     active ? 'var(--action-surface-strong)' : 'transparent',
+                  color:          active ? 'var(--action)' : 'var(--text-on-primary-muted)',
                   fontSize:       13,
                   fontWeight:     active ? 600 : 400,
                   textDecoration: 'none',
                   transition:     'all 0.15s',
-                  border:         active ? '1px solid rgba(196,106,45,0.4)' : '1px solid transparent',
+                  border:         active ? `1px solid var(--action-border)` : '1px solid transparent',
                 }}
               >
                 <item.icon size={15} />
@@ -95,18 +200,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
         {/* Spacer + date + logout */}
         <div style={{ flex: 1 }} />
-        <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 11, color: 'rgba(242,233,220,0.35)' }}>
+        <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 11, color: 'var(--text-on-primary-faint)' }}>
           {new Date().toLocaleDateString('pt-PT', { weekday: 'short', day: '2-digit', month: 'short' }).toUpperCase()}
         </div>
         <button
           onClick={handleSignOut}
           style={{
-            height:        30,
+            height:        44,
             padding:       '0 12px',
             borderRadius:  6,
-            border:        '1px solid rgba(242,233,220,0.15)',
+            border:        '1px solid var(--border-on-primary)',
             background:    'transparent',
-            color:         'rgba(242,233,220,0.5)',
+            color:         'var(--text-on-primary-muted)',
             fontSize:      12,
             cursor:        'pointer',
             letterSpacing: '0.04em',
@@ -117,7 +222,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </header>
 
       {/* ── Content ──────────────────────────────────────────── */}
-      <main style={{ flex: 1, overflow: 'hidden' }}>
+      <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {children}
       </main>
     </div>

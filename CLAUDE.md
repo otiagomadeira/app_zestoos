@@ -302,3 +302,19 @@ npm run lint     # ESLint
 ```
 
 Não existem testes automatizados.
+
+---
+
+## 10. Glossário
+
+| Termo | Definição |
+|-------|-----------|
+| Unidade Base | A unidade de medida interna: g, mL, un. Todo o stock vive aqui. |
+| Unidade de Compra | Como o fornecedor vende (Balde, Saco, Caixa). Convertida para Unidade Base ao receber. |
+| Fator de Conversão | Quantas unidades base existem numa unidade de compra. Ex: 1 Balde = 5kg → fator = 5. |
+| Par Level | Stock mínimo desejado em unidade base. Abaixo disto, o sistema sugere encomenda. |
+| Movimento | Qualquer entrada ou saída de stock. O histórico de movimentos é a fonte de verdade. |
+| Snapshot | Cópia congelada de preço e fator no momento do envio da encomenda. Imutável. |
+| ADJUSTMENT | Movimento gerado quando o Chef faz contagem manual e o sistema ajusta o stock. |
+| PURCHASE | Movimento gerado ao receber uma encomenda. Converte unidades de compra para base. |
+| Organization | Um restaurante cliente do Zesto OS. Todos os dados isolados por `organization_id`. |

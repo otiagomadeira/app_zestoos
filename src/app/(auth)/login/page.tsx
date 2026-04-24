@@ -7,8 +7,8 @@ import { signIn } from '../actions'
 const inputStyle: React.CSSProperties = {
   width:        '100%',
   height:       48,
-  background:   '#FFFFFF',
-  border:       '1px solid rgba(28,20,10,0.18)',
+  background:   'var(--white)',
+  border:       '1px solid var(--border)',
   borderRadius: 10,
   padding:      '0 16px',
   color:        'var(--text)',
@@ -49,7 +49,7 @@ export default function LoginPage() {
       </div>
 
       {/* Card */}
-      <div style={{ background: '#FFFFFF', borderRadius: 16, padding: '32px 28px', boxShadow: '0 4px 24px rgba(28,20,10,0.08)' }}>
+      <div style={{ background: 'var(--white)', borderRadius: 16, padding: '32px 28px', boxShadow: '0 4px 24px rgba(28,20,10,0.08)' }}>
         <h2 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
           Entrar
         </h2>
@@ -87,7 +87,7 @@ export default function LoginPage() {
           </div>
 
           {error && (
-            <div style={{ background: 'rgba(139,46,46,0.08)', border: '1px solid rgba(139,46,46,0.3)', borderRadius: 8, padding: '10px 14px', color: 'var(--error)', fontSize: 13 }}>
+            <div style={{ background: 'var(--error-surface)', border: '1px solid var(--error-border)', borderRadius: 8, padding: '10px 14px', color: 'var(--error)', fontSize: 13 }}>
               {error}
             </div>
           )}
@@ -101,7 +101,7 @@ export default function LoginPage() {
               borderRadius: 12,
               border:       'none',
               background:   'var(--action)',
-              color:        '#FFFFFF',
+              color:        'var(--text-on-primary)',
               fontSize:     16,
               fontWeight:   600,
               cursor:       loading ? 'default' : 'pointer',

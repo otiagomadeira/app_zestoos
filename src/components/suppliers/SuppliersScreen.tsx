@@ -85,17 +85,17 @@ export default function SuppliersScreen() {
     <div style={{
       display:       'flex',
       flexDirection: 'column',
-      borderRight:   '1px solid rgba(28,20,10,0.1)',
+      borderRight:   '1px solid var(--border)',
       background:    'var(--bg)',
       height:        '100%',
       overflow:      'hidden',
     }}>
-      <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid rgba(28,20,10,0.1)', flexShrink: 0 }}>
+      <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>Fornecedores</h2>
           <button
             onClick={handleNew}
-            style={{ height: 34, padding: '0 14px', borderRadius: 8, border: 'none', background: 'var(--action)', color: '#FFF', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+            style={{ height: 44, padding: '0 14px', borderRadius: 8, border: 'none', background: 'var(--action)', color: 'var(--text-on-primary)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
           >
             + Novo
           </button>
@@ -105,7 +105,7 @@ export default function SuppliersScreen() {
           placeholder="Pesquisar…"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          style={{ width: '100%', height: 36, background: 'var(--surface)', border: '1px solid rgba(28,20,10,0.15)', borderRadius: 8, padding: '0 12px', color: 'var(--text)', fontSize: 14, outline: 'none' }}
+          style={{ width: '100%', height: 40, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '0 12px', color: 'var(--text)', fontSize: 14, outline: 'none' }}
         />
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: 'var(--text-subtle)', cursor: 'pointer' }}>
           <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />
@@ -115,7 +115,7 @@ export default function SuppliersScreen() {
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
         {error && (
-          <div style={{ background: 'rgba(139,46,46,0.08)', border: '1px solid var(--error)', borderRadius: 8, padding: '10px 14px', color: 'var(--error)', fontSize: 13, marginBottom: 8 }}>
+          <div style={{ background: 'var(--error-surface)', border: `1px solid var(--error-border)`, borderRadius: 8, padding: '10px 14px', color: 'var(--error)', fontSize: 13, marginBottom: 8 }}>
             {error}
           </div>
         )}
@@ -135,7 +135,7 @@ export default function SuppliersScreen() {
                 padding:      '12px 14px',
                 borderRadius: 10,
                 border:       `1px solid ${selected?.id === s.id ? 'var(--action)' : 'var(--border)'}`,
-                background:   selected?.id === s.id ? 'rgba(196,106,45,0.06)' : 'var(--surface)',
+                background:   selected?.id === s.id ? 'var(--action-surface)' : 'var(--surface)',
                 cursor:       'pointer',
               }}
             >
@@ -144,7 +144,7 @@ export default function SuppliersScreen() {
                   {s.name}
                 </span>
                 {!s.is_active && (
-                  <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-subtle)', background: 'rgba(28,20,10,0.06)', padding: '2px 6px', borderRadius: 4, letterSpacing: '0.05em' }}>
+                  <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-subtle)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4, letterSpacing: '0.05em' }}>
                     INATIVO
                   </span>
                 )}
@@ -169,7 +169,7 @@ export default function SuppliersScreen() {
         />
       ) : (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <p style={{ color: 'rgba(242,233,220,0.3)', fontSize: 14 }}>Seleciona ou cria um fornecedor</p>
+          <p style={{ color: 'var(--text-on-primary-faint)', fontSize: 14 }}>Seleciona ou cria um fornecedor</p>
         </div>
       )}
     </div>
@@ -178,7 +178,7 @@ export default function SuppliersScreen() {
   // ── Mobile ─────────────────────────────────────────────────────────────────
   if (isMobile) {
     return (
-      <div style={{ height: 'calc(100vh - 64px)', background: 'var(--bg)' }}>
+      <div style={{ height: '100%', background: 'var(--bg)' }}>
         {showList  && listPanel}
         {showPanel && rightPanel}
       </div>
@@ -190,7 +190,7 @@ export default function SuppliersScreen() {
     <div style={{
       display:             'grid',
       gridTemplateColumns: 'minmax(0, 1fr) 420px',
-      height:              'calc(100vh - 64px)',
+      height:              '100%',
       overflow:            'hidden',
     }}>
       {listPanel}
