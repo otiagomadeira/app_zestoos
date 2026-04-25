@@ -468,6 +468,34 @@ export async function fetchAllArticles(): Promise<Article[]> {
   return result
 }
 
+/**
+ * Cria um article_size para servir como unidade de contagem default quando
+ * o artigo não tem fornecedor preferido. Idempotente: o UNIQUE index em
+ * (article_id, lower(label)) garante que chamadas repetidas não duplicam.
+ *
+ * `organization_id` é injectado pelo trigger `set_organization_id` —
+ * o cliente nunca o passa.
+ *
+ * Chamadores devem ignorar erros: a falha não deve bloquear a criação
+ * do artigo (o fallback unit/1 ainda funciona).
+ */
+export async function createArticleSizeIfMissing(
+  articleId:   string,
+  label:       string,
+  basePerUnit: number,
+): Promise<void> {
+  // ignoreDuplicates: true → PostgREST envia "ON CONFLICT DO NOTHING" sem
+  // target, que apanha qualquer UNIQUE incluindo expression indexes
+  // (uniq_article_sizes_article_label_lc).
+  const { error } = await supabase
+    .from('article_sizes')
+    .upsert(
+      { article_id: articleId, label, base_per_unit: basePerUnit, sort_order: 0 },
+      { ignoreDuplicates: true },
+    )
+  if (error) throw error
+}
+
 export async function createArticle(input: {
   name:        string
   unit:        string

@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Article } from '@/types/database'
-import { createArticle } from '@/lib/supabase'
+import { createArticle, createArticleSizeIfMissing } from '@/lib/supabase'
 import { KITCHEN_UNITS, formatUnit } from '@/lib/units'
 import { parseProductLines, recomputeDuplicates, type ParsedLine } from '@/lib/parseProductLines'
 import { suggestCategory } from '@/lib/categoryKeywords'
@@ -405,12 +405,26 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
       toCreate.map(async line => {
         const savedName = line.name.trim()
         maybeLearnAlias(line.originalName, savedName, aliases, learnAlias, line.wasManuallyEdited)
-        return createArticle({
+        const article = await createArticle({
           name:      savedName,
           unit:      line.unit.trim(),
           par_level: parseFloat(line.par_level) || 0,
           category:  line.category.trim() || undefined,
         })
+
+        // Embalagem operacional como article_size — só quando o parser detetou
+        // packaging útil e não há conversão trivial. Falha não bloqueia: o
+        // fallback unit/1 ainda mantém o artigo utilizável no inventário.
+        const stockUnit    = line.stock_unit.trim()
+        const basePerOrder = parseFloat(line.base_per_order)
+        if (stockUnit && stockUnit !== line.unit.trim() && basePerOrder > 0) {
+          try {
+            await createArticleSizeIfMissing(article.id, stockUnit, basePerOrder)
+          } catch (e) {
+            console.error('createArticleSize falhou:', { articleId: article.id, label: stockUnit, error: e })
+          }
+        }
+        return article
       })
     )
 

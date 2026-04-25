@@ -60,6 +60,15 @@ export interface ArticleSupplier {
   updated_at:        string
 }
 
+export interface ArticleSize {
+  id:            string
+  article_id:    string
+  label:         string         // ex: 'caixa', 'frasco', 'saco 25kg'
+  base_per_unit: number         // base_units por 1 article_size
+  sort_order:    number
+  created_at:    string
+}
+
 export interface Order {
   id:          string
   supplier_id: string

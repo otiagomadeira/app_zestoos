@@ -5,6 +5,7 @@ import type { Article, Supplier } from '@/types/database'
 import {
   createArticle, updateArticle, toggleArticleActive,
   fetchAllSuppliers, fetchArticleSuppliers, saveArticleSuppliers,
+  createArticleSizeIfMissing,
 } from '@/lib/supabase'
 import { ORDER_UNITS, formatUnit, formatStockQty } from '@/lib/units'
 import { ARTICLE_CATEGORIES, suggestCategory } from '@/lib/categoryKeywords'
@@ -371,6 +372,25 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
         conversion_factor: parseFloat(l.conversion_factor) || 1,
         is_preferred:      validLinks.length === 1 ? true : l.is_preferred,
       })))
+
+      // Criação manual: se o parser detetou supplierSeed e não foi guardado
+      // nenhum fornecedor real, persistir a embalagem como article_size para
+      // o inventário ter unidade operacional. Idempotente; falha não bloqueia.
+      const seed = parsedSeedRef.current?.supplierSeed
+      if (
+        !isEdit &&
+        validLinks.length === 0 &&
+        seed?.order_unit &&
+        seed.conversion_factor != null &&
+        seed.conversion_factor > 0 &&
+        seed.order_unit !== input.unit
+      ) {
+        try {
+          await createArticleSizeIfMissing(saved.id, seed.order_unit, seed.conversion_factor)
+        } catch (e) {
+          console.error('createArticleSize falhou:', { articleId: saved.id, label: seed.order_unit, error: e })
+        }
+      }
 
       maybeLearnAlias(
         rawNameRef.current,
