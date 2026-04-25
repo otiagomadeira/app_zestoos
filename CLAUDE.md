@@ -254,6 +254,29 @@ O stock é sempre armazenado e calculado em `base_unit`. A conversão para `stoc
 
 Ficheiros SQL numerados em `supabase/migrations/`. Aplicar via Supabase CLI ou dashboard. Nunca editar migrações existentes — criar sempre uma nova.
 
+### Aprendizagem global vs por restaurante (invariant)
+
+A Zesto OS combina dois tipos de conhecimento. Esta separação é regra de produto e nunca deve ser quebrada.
+
+**Conhecimento global** — vive **apenas no código**, partilhado por todos os restaurantes:
+- `src/lib/ingredientDictionary.ts` — `DICT` (correções universais de nome)
+- `src/lib/categoryKeywords.ts` — categorias base
+- `src/lib/units.ts` — unidades de cozinha
+- regras universais: acentos, ingredientes comuns, embalagens, conversões
+
+Nunca persistir conhecimento global em DB partilhada. Nunca seedar `ingredient_aliases` com valores universais.
+
+**Aprendizagem por restaurante** — vive **apenas em DB**, isolada por `organization_id`:
+- tabela `ingredient_aliases` — correções idiossincráticas do restaurante
+- RLS protege via `current_org_id()` em SELECT/INSERT/UPDATE/DELETE
+- cliente nunca passa `organization_id` — trigger `trg_set_org_ingredient_aliases` injeta a partir do JWT
+- só aprende **depois de save bem-sucedido** (artigo persistido)
+- só aprende quando o utilizador editou manualmente o nome (`wasManuallyEdited=true`)
+- **nunca** aprende em parse, preview, blur ou importação não confirmada
+- **nunca** propaga aliases entre restaurantes
+
+A precedência em `normalizeName(input, orgAliases)` é: alias da org → DICT global → input. Restaurante sobrepõe-se ao default global, nunca o contrário.
+
 ---
 
 ## 7. Regras técnicas
