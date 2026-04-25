@@ -28,6 +28,9 @@ Fechar loop real: **Contar → Decidir → Encomendar** (sem fricção)
   - [x] "2kg tomate"
   - [x] "4 leite"
   - [x] "1cx ovos"
+  - [x] Parser estabilizado — `npm run test:parser` cobre 25 casos
+        (peso/volume/multipack/conserva/enlatado/uni). Pronto para
+        validação real com 30 produtos do Zazzaro.
 - [x] Preview editável
   - [x] Nome editável
   - [x] Unidade editável
