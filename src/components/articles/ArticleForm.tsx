@@ -10,7 +10,7 @@ import { ORDER_UNITS, formatUnit } from '@/lib/units'
 import { ARTICLE_CATEGORIES, suggestCategory } from '@/lib/categoryKeywords'
 import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
 import { normalizeArticleInput } from '@/lib/normalizeArticle'
-import { parseArticleInput, type ParsedArticleInput } from '@/lib/parseArticleInput'
+import { buildArticleDraft, formatDraftHint, type ArticleDraft } from '@/lib/articleDraft'
 import { useOrgAliases } from '@/hooks/useOrgAliases'
 
 interface Props {
@@ -30,13 +30,6 @@ type LinkRow = {
   is_preferred:      boolean
 }
 
-
-// Quantas unidades base há numa unidade detectada no nome
-const UNIT_TO_BASE_FACTOR: Record<string, number> = {
-  g: 1, kg: 1000, mg: 0.001,
-  mL: 1, ml: 1, L: 1000, l: 1000, cl: 10, dl: 100,
-  un: 1,
-}
 
 // Sugestões de g_per_unit para artigos contáveis comuns (chaves em normalizeKey format)
 const G_PER_UNIT_HINTS: Record<string, number> = {
@@ -115,7 +108,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   const [error,              setError]             = useState<string | null>(null)
   const [isDirty,            setIsDirty]           = useState(false)
   const [duplicateWarning,   setDuplicateWarning]  = useState<string | null>(null)
-  const [parsedHint,         setParsedHint]         = useState<ParsedArticleInput | null>(null)
+  const [parsedHint,         setParsedHint]         = useState<ArticleDraft | null>(null)
   const [autoFillMsg,        setAutoFillMsg]        = useState<{ key: string; text: string } | null>(null)
   // Campos preenchidos automaticamente (parser ou heurística). Limpos quando user edita.
   // Keys: 'gPerUnit' | `orderUnit_${linkKey}` | `conv_${linkKey}`
@@ -124,7 +117,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   const { aliases, learnAlias } = useOrgAliases()
   const rawNameRef              = useRef(existing?.name ?? '')
   const nameChangedAfterBlurRef = useRef(false)
-  const parsedSeedRef           = useRef<ParsedArticleInput | null>(null)
+  const parsedSeedRef           = useRef<ArticleDraft | null>(null)
   const autoFillTimerRef        = useRef<ReturnType<typeof setTimeout> | null>(null)
   const unitManuallySet         = useRef(!!existing)
 
@@ -322,13 +315,13 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                 setUnit(normalizeArticleInput(val, aliases).unit)
               }
               // Hint de parsing em tempo real + seed para auto-fill do fornecedor
-              const parsed = parseArticleInput(val)
+              const draft = buildArticleDraft(val, aliases)
               const hasExtracted =
-                parsed.detected_qty != null ||
-                parsed.detected_unit != null ||
-                parsed.detected_packaging != null
-              setParsedHint(hasExtracted ? parsed : null)
-              parsedSeedRef.current = hasExtracted ? parsed : null
+                draft.detected_qty != null ||
+                draft.detected_label != null ||
+                draft.supplierSeed != null
+              setParsedHint(hasExtracted ? draft : null)
+              parsedSeedRef.current = hasExtracted ? draft : null
             }}
             onBlur={handleNameBlur}
             onKeyDown={e => { if (e.key === 'Enter' && name.trim()) handleSave() }}
@@ -347,16 +340,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
               lineHeight: 1.4,
               fontFamily: 'JetBrains Mono, monospace',
             }}>
-              {[
-                parsedHint.detected_qty != null && parsedHint.detected_unit
-                  ? `${parsedHint.detected_qty} ${parsedHint.detected_unit}`
-                  : parsedHint.detected_qty != null
-                    ? String(parsedHint.detected_qty)
-                    : null,
-                parsedHint.detected_packaging,
-              ]
-                .filter(Boolean)
-                .join(' · ')}
+              {formatDraftHint(parsedHint)}
             </p>
           )}
         </div>
@@ -770,27 +754,19 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
 
           <button
             onClick={() => {
-              const seed       = parsedSeedRef.current
+              const seed       = parsedSeedRef.current?.supplierSeed
               const link       = emptyLink()
               let autoExpand   = false
               let msg          = ''
 
               const autoFields: string[] = []
               if (seed) {
-                if (seed.detected_packaging) {
-                  link.order_unit = seed.detected_packaging
+                if (seed.order_unit) {
+                  link.order_unit = seed.order_unit
                   autoFields.push(`orderUnit_${link.key}`)
                 }
-                if (seed.detected_qty != null && seed.detected_unit) {
-                  const factor = UNIT_TO_BASE_FACTOR[seed.detected_unit]
-                  if (factor != null) {
-                    link.conversion_factor = String(seed.detected_qty * factor)
-                    autoExpand = true
-                    autoFields.push(`conv_${link.key}`)
-                  }
-                } else if (seed.detected_qty != null && unit === 'un' && seed.detected_packaging) {
-                  // "Ovo Caixa 180" → 1 caixa = 180 un (qty pura, sem unidade explícita)
-                  link.conversion_factor = String(seed.detected_qty)
+                if (seed.conversion_factor != null) {
+                  link.conversion_factor = String(seed.conversion_factor)
                   autoExpand = true
                   autoFields.push(`conv_${link.key}`)
                 }
@@ -801,8 +777,8 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                   msg = `Auto: 1 ${link.order_unit} = ${fmtFactor(link.conversion_factor)}`
                 } else if (hasPackaging) {
                   msg = `Auto: unidade de compra = ${link.order_unit}`
-                } else if (hasConversion && seed.detected_unit) {
-                  msg = `Auto: 1 ${seed.detected_unit} = ${fmtFactor(link.conversion_factor)}`
+                } else if (hasConversion) {
+                  msg = `Auto: ${fmtFactor(link.conversion_factor)}`
                 }
               }
 
