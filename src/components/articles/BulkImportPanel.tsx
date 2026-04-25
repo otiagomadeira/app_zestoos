@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Article } from '@/types/database'
 import { createArticle, createArticleSizeIfMissing } from '@/lib/supabase'
-import { KITCHEN_UNITS, formatUnit } from '@/lib/units'
+import { formatUnit } from '@/lib/units'
 import { parseProductLines, recomputeDuplicates, type ParsedLine } from '@/lib/parseProductLines'
 import { suggestCategory } from '@/lib/categoryKeywords'
 import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
@@ -104,45 +104,45 @@ function LineRow({ line, onChange, onDelete, onApplySuggestion: _onApplySuggesti
           />
         </div>
         <div>
-          {unitMissing ? (
-            <>
-              <span style={{ ...labelStyle, color: 'var(--warning-text)' }}>Seleciona unidade</span>
-              <div style={{ display: 'flex', gap: 4 }}>
-                {(['g', 'mL', 'un'] as const).map(u => (
-                  <button
-                    key={u}
-                    type="button"
-                    onClick={() => { onChange(line.id, 'unit', u); onResolved?.(line.id) }}
-                    style={{
-                      flex:         1,
-                      height:       44,
-                      borderRadius: 6,
-                      border:       `1px solid var(--action-border)`,
-                      background:   'var(--action-surface)',
-                      color:        'var(--action)',
-                      fontSize:     11,
-                      fontWeight:   700,
-                      cursor:       'pointer',
-                      fontFamily:   'JetBrains Mono, monospace',
-                    }}
-                  >
-                    {u}
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : (
-            <>
-              <label style={labelStyle}>UN. BASE</label>
-              <input
-                list="bulk-units-datalist"
-                value={line.unit}
-                onChange={e => onChange(line.id, 'unit', e.target.value)}
-                placeholder="g, kg, un…"
-                style={inputStyle}
-              />
-            </>
-          )}
+          {/* base_unit é sempre uma de g/mL/un — modelo de dados (CLAUDE.md
+              §6) não aceita kg/L/cl/dl como unit do artigo. Quick-pick
+              fechado evita que o chef edite para um valor que partiria
+              silenciosamente a view current_stock e os cálculos de stock. */}
+          <span style={{
+            ...labelStyle,
+            color: unitMissing ? 'var(--warning-text)' : 'var(--text-on-primary-muted)',
+          }}>
+            {unitMissing ? 'Seleciona unidade' : 'UN. BASE'}
+          </span>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {(['g', 'mL', 'un'] as const).map(u => {
+              const selected = line.unit === u
+              return (
+                <button
+                  key={u}
+                  type="button"
+                  onClick={() => {
+                    onChange(line.id, 'unit', u)
+                    if (unitMissing) onResolved?.(line.id)
+                  }}
+                  style={{
+                    flex:         1,
+                    height:       44,
+                    borderRadius: 6,
+                    border:       `1px solid ${selected ? 'var(--action)' : 'var(--action-border)'}`,
+                    background:   selected ? 'var(--action)' : 'var(--action-surface)',
+                    color:        selected ? 'var(--text-on-primary)' : 'var(--action)',
+                    fontSize:     11,
+                    fontWeight:   700,
+                    cursor:       'pointer',
+                    fontFamily:   'JetBrains Mono, monospace',
+                  }}
+                >
+                  {u}
+                </button>
+              )
+            })}
+          </div>
         </div>
       </div>
 
@@ -404,10 +404,17 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
     const results = await Promise.allSettled(
       toCreate.map(async line => {
         const savedName = line.name.trim()
+        // Guard de defesa em profundidade: base_unit do artigo só pode ser
+        // g/mL/un (CLAUDE.md §6). UI já restringe via quick-pick mas se algo
+        // escapar (alias antigo, save programático), recusamos aqui.
+        const unit = line.unit.trim()
+        if (unit !== 'g' && unit !== 'mL' && unit !== 'un') {
+          throw new Error(`Unidade inválida em "${savedName}": ${unit || '(vazio)'} — esperado g, mL ou un.`)
+        }
         maybeLearnAlias(line.originalName, savedName, aliases, learnAlias, line.wasManuallyEdited)
         const article = await createArticle({
           name:      savedName,
-          unit:      line.unit.trim(),
+          unit,
           par_level: parseFloat(line.par_level) || 0,
           category:  line.category.trim() || undefined,
         })
@@ -461,10 +468,6 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
 
-      {/* Datalists de unidades (partilhados) */}
-      <datalist id="bulk-units-datalist">
-        {KITCHEN_UNITS.map(u => <option key={u} value={u} />)}
-      </datalist>
       {/* ── Header ── */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
