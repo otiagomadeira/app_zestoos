@@ -42,6 +42,7 @@ export interface Article {
   par_level:   number        // em base_unit
   category:    string | null
   is_active:   boolean
+  g_per_unit:  number | null // peso médio em g de 1 un (ovos, porções…); null = não aplicável
   created_at:  string
   updated_at:  string
 }
@@ -99,14 +100,15 @@ export interface StockMovement {
 // ── Views ────────────────────────────────────────────────────
 
 export interface CurrentStock {
-  article_id:  string
-  name:        string
-  unit:        string        // base_unit (= stock_unit após simplificação)
-  stock_unit:  string        // sempre igual a unit
-  par_level:   number        // em base_unit
-  category:    string | null
-  current_qty: number        // soma dos movimentos em base_unit
-  diff_from_par: number      // current_qty - par_level
+  article_id:     string
+  name:           string
+  unit:           string        // base_unit (g, mL, un)
+  stock_unit:     string        // unidade de contagem; derivada do fornecedor preferido (=unit se sem supplier)
+  base_per_stock: number        // base_units por stock_unit (=1 se sem supplier)
+  par_level:      number        // em base_unit
+  category:       string | null
+  current_qty:    number        // soma dos movimentos em base_unit
+  diff_from_par:  number        // current_qty - par_level (em base_unit)
 }
 
 export interface OrderSuggestion {

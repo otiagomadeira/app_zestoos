@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/client'
+import { getCache, setCache, invalidateCache } from '@/lib/cache'
 import type {
   Article,
   ArticleSupplier,
@@ -18,6 +19,9 @@ export const supabase = createClient()
 // ── Stock ─────────────────────────────────────────────────────
 
 export async function fetchCurrentStock(): Promise<CurrentStock[]> {
+  const cached = getCache<CurrentStock[]>('current_stock')
+  if (cached) return cached
+
   const { data, error } = await supabase
     .from('current_stock')
     .select('*')
@@ -25,7 +29,9 @@ export async function fetchCurrentStock(): Promise<CurrentStock[]> {
     .order('name',     { ascending: true })
 
   if (error) throw error
-  return (data ?? []) as CurrentStock[]
+  const result = (data ?? []) as CurrentStock[]
+  setCache('current_stock', result)
+  return result
 }
 
 export async function saveStockCount(
@@ -62,6 +68,7 @@ export async function saveStockCount(
       counted_at: new Date().toISOString(),
     })
   if (error) throw error
+  invalidateCache('current_stock', 'order_suggestions')
 
   return { saved: true }
 }
@@ -69,13 +76,18 @@ export async function saveStockCount(
 // ── Order Suggestions ─────────────────────────────────────────
 
 export async function fetchOrderSuggestions(): Promise<OrderSuggestion[]> {
+  const cached = getCache<OrderSuggestion[]>('order_suggestions')
+  if (cached) return cached
+
   const { data, error } = await supabase
     .from('order_suggestions')
     .select('*')
     .order('name', { ascending: true })
 
   if (error) throw error
-  return (data ?? []) as OrderSuggestion[]
+  const result = (data ?? []) as OrderSuggestion[]
+  setCache('order_suggestions', result)
+  return result
 }
 
 // ── Orders ────────────────────────────────────────────────────
@@ -161,16 +173,21 @@ export async function updateOrderStatus(
     .eq('id', orderId)
 
   if (error) throw error
+  invalidateCache('order_suggestions')
 }
 
 export async function receiveOrder(orderId: string): Promise<void> {
   const { error } = await supabase.rpc('receive_order', { p_order_id: orderId })
   if (error) throw error
+  invalidateCache('current_stock', 'order_suggestions')
 }
 
 // ── Articles (para selectors) ────────────────────────────────
 
 export async function fetchArticles(): Promise<Article[]> {
+  const cached = getCache<Article[]>('articles_active')
+  if (cached) return cached
+
   const { data, error } = await supabase
     .from('articles')
     .select('*')
@@ -178,12 +195,17 @@ export async function fetchArticles(): Promise<Article[]> {
     .order('name', { ascending: true })
 
   if (error) throw error
-  return (data ?? []) as Article[]
+  const result = (data ?? []) as Article[]
+  setCache('articles_active', result)
+  return result
 }
 
 // ── Productions ───────────────────────────────────────────────
 
 export async function fetchProductionsWithStock(): Promise<(CurrentProductionStock & Partial<ProductionWithCost>)[]> {
+  const cached = getCache<(CurrentProductionStock & Partial<ProductionWithCost>)[]>('productions_stock')
+  if (cached) return cached
+
   const [stockRes, costRes] = await Promise.all([
     supabase.from('current_production_stock').select('*').order('name', { ascending: true }),
     supabase.from('production_cost').select('*'),
@@ -194,10 +216,12 @@ export async function fetchProductionsWithStock(): Promise<(CurrentProductionSto
   const costMap = new Map<string, ProductionWithCost>()
   ;(costRes.data ?? []).forEach((c: ProductionWithCost) => costMap.set(c.production_id, c))
 
-  return (stockRes.data ?? []).map((s: CurrentProductionStock) => ({
+  const result = (stockRes.data ?? []).map((s: CurrentProductionStock) => ({
     ...s,
     ...costMap.get(s.production_id),
   }))
+  setCache('productions_stock', result)
+  return result
 }
 
 export async function fetchProductionDetail(id: string): Promise<ProductionDetail> {
@@ -329,6 +353,7 @@ export async function createProduction(input: ProductionInput): Promise<Producti
     if (ingErr) throw ingErr
   }
 
+  invalidateCache('productions_stock')
   return prod as Production
 }
 
@@ -370,6 +395,7 @@ export async function updateProduction(id: string, input: ProductionInput): Prom
       )
     if (ingErr) throw ingErr
   }
+  invalidateCache('productions_stock')
 }
 
 export async function saveProductionCount(
@@ -388,6 +414,7 @@ export async function saveProductionCount(
       counted_at:    new Date().toISOString(),
     })
   if (error) throw error
+  invalidateCache('productions_stock')
 }
 
 // ── Unit Conversions ──────────────────────────────────────────
@@ -428,39 +455,48 @@ export function convertUnit(
 // ── Articles Management ───────────────────────────────────────
 
 export async function fetchAllArticles(): Promise<Article[]> {
+  const cached = getCache<Article[]>('all_articles')
+  if (cached) return cached
+
   const { data, error } = await supabase
     .from('articles')
     .select('*')
     .order('name', { ascending: true })
   if (error) throw error
-  return (data ?? []) as Article[]
+  const result = (data ?? []) as Article[]
+  setCache('all_articles', result)
+  return result
 }
 
 export async function createArticle(input: {
-  name:      string
-  unit:      string
-  par_level: number
-  category?: string
+  name:        string
+  unit:        string
+  par_level:   number
+  category?:   string
+  g_per_unit?: number | null
 }): Promise<Article> {
   const { data, error } = await supabase
     .from('articles')
     .insert({
-      name:      input.name,
-      unit:      input.unit,
-      par_level: input.par_level,
-      category:  input.category ?? null,
+      name:       input.name,
+      unit:       input.unit,
+      par_level:  input.par_level,
+      category:   input.category ?? null,
+      g_per_unit: input.g_per_unit ?? null,
     })
     .select()
     .single()
   if (error) throw error
+  invalidateCache('all_articles', 'articles_active')
   return data as Article
 }
 
 export async function updateArticle(id: string, input: {
-  name:      string
-  unit:      string
-  par_level: number
-  category?: string
+  name:        string
+  unit:        string
+  par_level:   number
+  category?:   string
+  g_per_unit?: number | null
 }): Promise<void> {
   const { error } = await supabase
     .from('articles')
@@ -469,10 +505,12 @@ export async function updateArticle(id: string, input: {
       unit:       input.unit,
       par_level:  input.par_level,
       category:   input.category ?? null,
+      g_per_unit: input.g_per_unit ?? null,
       updated_at: new Date().toISOString(),
     })
     .eq('id', id)
   if (error) throw error
+  invalidateCache('all_articles', 'articles_active')
 }
 
 export async function toggleArticleActive(id: string, isActive: boolean): Promise<void> {
@@ -481,6 +519,7 @@ export async function toggleArticleActive(id: string, isActive: boolean): Promis
     .update({ is_active: isActive, updated_at: new Date().toISOString() })
     .eq('id', id)
   if (error) throw error
+  invalidateCache('all_articles', 'articles_active')
 }
 
 export async function fetchArticleSuppliers(
@@ -534,12 +573,17 @@ export async function saveArticleSuppliers(
 // ── Suppliers Management ──────────────────────────────────────
 
 export async function fetchAllSuppliers(): Promise<Supplier[]> {
+  const cached = getCache<Supplier[]>('all_suppliers')
+  if (cached) return cached
+
   const { data, error } = await supabase
     .from('suppliers')
     .select('*')
     .order('name', { ascending: true })
   if (error) throw error
-  return (data ?? []) as Supplier[]
+  const result = (data ?? []) as Supplier[]
+  setCache('all_suppliers', result)
+  return result
 }
 
 export async function createSupplier(input: {
@@ -559,6 +603,7 @@ export async function createSupplier(input: {
     .select()
     .single()
   if (error) throw error
+  invalidateCache('all_suppliers')
   return data as Supplier
 }
 
@@ -579,6 +624,7 @@ export async function updateSupplier(id: string, input: {
     })
     .eq('id', id)
   if (error) throw error
+  invalidateCache('all_suppliers')
 }
 
 export async function toggleSupplierActive(id: string, isActive: boolean): Promise<void> {
@@ -587,6 +633,7 @@ export async function toggleSupplierActive(id: string, isActive: boolean): Promi
     .update({ is_active: isActive, updated_at: new Date().toISOString() })
     .eq('id', id)
   if (error) throw error
+  invalidateCache('all_suppliers')
 }
 
 // ── Movements ─────────────────────────────────────────────────

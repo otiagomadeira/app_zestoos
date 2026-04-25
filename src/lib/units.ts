@@ -1,26 +1,36 @@
-/**
- * Formata uma quantidade com a sua unidade, aplicando conversão inteligente:
- * g < 1000 → "X gr" | g ≥ 1000 → "X kg"
- * mL/ml < 1000 → "X ml" | mL/ml ≥ 1000 → "X lt"
- * outras unidades → "X unit"
- */
+// Formata value + unit com conversão automática e máx 2 casas decimais:
+// g < 1000 → "X g"  | g ≥ 1000 → "X kg"
+// mL/ml < 1000 → "X ml" | mL/ml ≥ 1000 → "X L"
+// outras → "X unit"
+export function formatUnit(value: number, unit: string): string {
+  const fmt = (n: number) => String(+(n.toFixed(2)))
+  if (unit === 'g')               return value >= 1000 ? `${fmt(value / 1000)} kg` : `${fmt(value)} g`
+  if (unit === 'mL' || unit === 'ml') return value >= 1000 ? `${fmt(value / 1000)} L`  : `${fmt(value)} ml`
+  return `${fmt(value)} ${unit}`
+}
+
 export function formatStockQty(qty: number, unit: string): string {
-  const fmt = (n: number) => n % 1 === 0 ? n.toFixed(0) : n.toFixed(1)
-  if (unit === 'g') {
-    if (qty >= 1000) {
-      const kg = qty / 1000
-      return `${kg % 1 === 0 ? kg.toFixed(0) : kg.toFixed(1)} kg`
-    }
-    return `${qty % 1 === 0 ? qty.toFixed(0) : qty.toFixed(1)} gr`
+  return formatUnit(qty, unit)
+}
+
+// Formata qty (em base_unit) para display em stock_unit:
+// - stock_unit === unit → formatStockQty (auto-converte g→kg, mL→L)
+// - stock_unit !== unit → divide por basePerStock e mostra com stock_unit
+export function formatStockDisplay(
+  qtyBase:      number,
+  unit:         string,
+  stockUnit:    string,
+  basePerStock: number,
+): string {
+  if (stockUnit === unit || basePerStock <= 0) {
+    return formatStockQty(qtyBase, unit)
   }
-  if (unit === 'mL' || unit === 'ml') {
-    if (qty >= 1000) {
-      const l = qty / 1000
-      return `${l % 1 === 0 ? l.toFixed(0) : l.toFixed(1)} lt`
-    }
-    return `${qty % 1 === 0 ? qty.toFixed(0) : qty.toFixed(1)} ml`
-  }
-  return `${fmt(qty)} ${unit}`
+  const qty = qtyBase / basePerStock
+  return `${+(qty.toFixed(2))} ${stockUnit}`
+}
+
+export function formatWeight(g: number): string {
+  return formatUnit(g, 'g')
 }
 
 // Unidades de embalagem para campo UN. COMPRA (fornecedores)

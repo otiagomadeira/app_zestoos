@@ -67,17 +67,20 @@ export default function InventoryScreen() {
     const article = articles.find(a => a.article_id === id)
     if (!article || !dirty[id]) return
 
-    const newQty = parseFloat(dirty[id])
-    if (isNaN(newQty)) return
+    const newQtyStock = parseFloat(dirty[id])
+    if (isNaN(newQtyStock)) return
+
+    // Cook digita em stock_unit (ex: 2 caixas). Convertemos para base_unit (ex: 360 un).
+    const newQtyBase = newQtyStock * article.base_per_stock
 
     setSavingId(id)
     try {
-      const result = await saveStockCount(id, newQty, article.unit, article.current_qty)
+      const result = await saveStockCount(id, newQtyBase, article.unit, article.current_qty)
 
       if (result.saved) {
         setArticles(prev => prev.map(a =>
           a.article_id === id
-            ? { ...a, current_qty: newQty, diff_from_par: newQty - a.par_level }
+            ? { ...a, current_qty: newQtyBase, diff_from_par: newQtyBase - a.par_level }
             : a
         ))
         setDirty(prev => { const next = { ...prev }; delete next[id]; return next })

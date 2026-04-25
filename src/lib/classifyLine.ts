@@ -107,14 +107,20 @@ function parseQty(raw: string): number {
 /**
  * Dado o texto completo e a posição de início de um match de peso/volume,
  * devolve o label de embalagem imediatamente antes (se existir).
- * Ex: "Rúcula saco 200gr" com matchIndex=8 (posição de "200gr") → 'saco'
+ * Ex: "Rúcula saco 200gr" com matchIndex=8 → 'saco'
+ *      "Mel frasco de 1KG"               → 'frasco' (skip do conector "de")
  */
+const LABEL_CONNECTORS = new Set(['de', 'da', 'do', 'dos', 'das'])
+
 function findAdjacentPackagingLabel(line: string, matchIndex: number): string | null {
   const before = line.slice(0, matchIndex).trim()
   if (!before) return null
   const words = before.split(/\s+/)
-  const last = words[words.length - 1]?.toLowerCase() ?? ''
-  return PACKAGING_LABELS.has(last) ? last : null
+  // Salta conectores PT (de, da, do…) para encontrar o label real antes
+  let i = words.length - 1
+  while (i >= 0 && LABEL_CONNECTORS.has(words[i].toLowerCase())) i--
+  const target = words[i]?.toLowerCase() ?? ''
+  return PACKAGING_LABELS.has(target) ? target : null
 }
 
 // ── API pública ──────────────────────────────────────────────────────────────

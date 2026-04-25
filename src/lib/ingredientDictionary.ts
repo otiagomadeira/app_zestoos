@@ -1092,12 +1092,13 @@ export function normalizeName(input: string, orgAliases?: Map<string, string>): 
 export const correctIngredientName = normalizeName
 
 /**
- * Aprende um alias apenas quando o sistema teria sugerido algo diferente do que foi guardado.
+ * Aprende um alias quando o utilizador corrigiu manualmente o nome sugerido pelo sistema.
  *
- * wasManuallyEdited=true: utilizador editou o nome final após a sugestão automática
- * → não aprender, para evitar que correções manuais pontuais se tornem aliases permanentes.
- * Exemplo: input "acucar" → sistema sugere "Açúcar" → utilizador muda para "Açúcar Branco"
- * → NÃO aprende "acucar → Açúcar Branco".
+ * Só aprende quando wasManuallyEdited=true (utilizador alterou o nome no preview).
+ * Não aprende correções do DICT (já estão cobertas) nem aceitações sem edição.
+ *
+ * Exemplo: input "Mozzarela" → sistema sugere "Mozzarela" (não no DICT) →
+ * utilizador muda para "Mozzarella" → aprende alias "mozzarela → Mozzarella".
  */
 export function maybeLearnAlias(
   rawInput: string,
@@ -1106,10 +1107,10 @@ export function maybeLearnAlias(
   learnAlias: (key: string, canonical: string) => void,
   wasManuallyEdited?: boolean,
 ): void {
-  if (wasManuallyEdited) return
+  if (!wasManuallyEdited) return
   const raw = rawInput.trim()
   const key = normalizeKey(raw)
-  if (raw.length >= 3 && !aliases.has(key) && normalizeName(raw, aliases) !== savedName) {
+  if (raw.length >= 3 && !aliases.has(key) && normalizeName(raw) !== savedName) {
     learnAlias(key, savedName)
   }
 }

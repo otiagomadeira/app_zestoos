@@ -6,7 +6,7 @@ import {
   createArticle, updateArticle, toggleArticleActive,
   fetchAllSuppliers, fetchArticleSuppliers, saveArticleSuppliers,
 } from '@/lib/supabase'
-import { ORDER_UNITS } from '@/lib/units'
+import { ORDER_UNITS, formatUnit } from '@/lib/units'
 import { ARTICLE_CATEGORIES, suggestCategory } from '@/lib/categoryKeywords'
 import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
 import { normalizeArticleInput } from '@/lib/normalizeArticle'
@@ -30,6 +30,30 @@ type LinkRow = {
   is_preferred:      boolean
 }
 
+
+// Quantas unidades base há numa unidade detectada no nome
+const UNIT_TO_BASE_FACTOR: Record<string, number> = {
+  g: 1, kg: 1000, mg: 0.001,
+  mL: 1, ml: 1, L: 1000, l: 1000, cl: 10, dl: 100,
+  un: 1,
+}
+
+// Sugestões de g_per_unit para artigos contáveis comuns (chaves em normalizeKey format)
+const G_PER_UNIT_HINTS: Record<string, number> = {
+  'ovo': 52, 'ovos': 52, 'ovos frescos': 52,
+  'clara': 30, 'claras': 30,
+  'gema': 18, 'gemas': 18,
+  'ovo de codorniz': 10, 'ovos de codorniz': 10,
+  'limao': 90, 'limao amarelo': 90,
+  'lima': 60,
+  'laranja': 130,
+  'banana': 120,
+  'kiwi': 80,
+  'maca': 150,
+  'pera': 160,
+  'pessego': 150,
+  'nectarina': 140,
+}
 
 let _key = 0
 const nextKey = () => String(++_key)
@@ -81,8 +105,9 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   const [name,               setName]              = useState(existing?.name     ?? '')
   const [category,           setCategory]          = useState(existing?.category ?? '')
   const [showCategoryPicker, setShowCategoryPicker] = useState(false)
-  const [unit,               setUnit]              = useState(existing?.unit     ?? '')
+  const [unit,               setUnit]              = useState<'g' | 'mL' | 'un'>((existing?.unit as 'g' | 'mL' | 'un') ?? 'g')
   const [parLevel,           setParLevel]          = useState(existing ? String(existing.par_level) : '')
+  const [gPerUnit,           setGPerUnit]          = useState(existing?.g_per_unit != null ? String(existing.g_per_unit) : '')
   const [links,              setLinks]             = useState<LinkRow[]>([])
   const [suppliers,          setSuppliers]         = useState<Supplier[]>([])
   const [expandedLinks,      setExpandedLinks]     = useState<Set<string>>(new Set())
@@ -91,14 +116,38 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   const [isDirty,            setIsDirty]           = useState(false)
   const [duplicateWarning,   setDuplicateWarning]  = useState<string | null>(null)
   const [parsedHint,         setParsedHint]         = useState<ParsedArticleInput | null>(null)
+  const [autoFillMsg,        setAutoFillMsg]        = useState<{ key: string; text: string } | null>(null)
+  // Campos preenchidos automaticamente (parser ou heurística). Limpos quando user edita.
+  // Keys: 'gPerUnit' | `orderUnit_${linkKey}` | `conv_${linkKey}`
+  const [autoFilled,         setAutoFilled]         = useState<Set<string>>(new Set())
 
   const { aliases, learnAlias } = useOrgAliases()
-  const rawNameRef             = useRef(existing?.name ?? '')
-  // true se o utilizador editou o nome depois da última normalização automática
+  const rawNameRef              = useRef(existing?.name ?? '')
   const nameChangedAfterBlurRef = useRef(false)
+  const parsedSeedRef           = useRef<ParsedArticleInput | null>(null)
+  const autoFillTimerRef        = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const unitManuallySet         = useRef(!!existing)
+
+  const markAuto = (field: string) => setAutoFilled(prev => {
+    if (prev.has(field)) return prev
+    return new Set([...prev, field])
+  })
+  const unmarkAuto = (field: string) => setAutoFilled(prev => {
+    if (!prev.has(field)) return prev
+    const next = new Set(prev)
+    next.delete(field)
+    return next
+  })
+
+  // Formata um conversion_factor (sempre em base unit) para display.
+  // Comparações e cálculos usam sempre o valor bruto em número.
+  const fmtFactor = (raw: string) => {
+    const n = parseFloat(raw)
+    if (!n) return raw
+    return formatUnit(n, unit)
+  }
 
   const handleNameBlur = () => {
-    setParsedHint(null)
     if (!name.trim()) return
 
     // Pipeline única — normaliza nome, infere unidade e categoria
@@ -112,7 +161,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
     // Preencher campos vazios (nunca sobrescrever escolhas conscientes)
     if (!isEdit) {
       if (category.trim() === '' && normalized.category) setCategory(normalized.category)
-      if (unit.trim() === '') setUnit(normalized.unit)
+      if (!unitManuallySet.current) setUnit(normalized.unit)
     }
 
     // Deteção de duplicados (só para artigos novos)
@@ -120,6 +169,16 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
       const key = normalized.normalizedKey
       const dup = articles.find(a => normalizeKey(a.name) === key)
       setDuplicateWarning(dup ? `Artigo semelhante já existe: "${dup.name}"` : null)
+    }
+
+    // Auto-sugestão de g_per_unit para artigos contáveis
+    const effectiveUnit = unitManuallySet.current ? unit : normalized.unit
+    if (effectiveUnit === 'un' && !gPerUnit) {
+      const hint = G_PER_UNIT_HINTS[normalized.normalizedKey]
+      if (hint) {
+        setGPerUnit(String(hint))
+        markAuto('gPerUnit')
+      }
     }
   }
 
@@ -154,7 +213,6 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
 
   const handleSave = async () => {
     if (!name.trim()) return setError('Nome é obrigatório')
-    if (!unit.trim()) return setError('Unidade base é obrigatória')
     const par = parseFloat(parLevel)
     if (isNaN(par) || par < 0) return setError('Par level inválido')
 
@@ -166,11 +224,13 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
     setError(null)
     try {
       const normalized = normalizeArticleInput(name.trim(), aliases)
+      const gPer = parseFloat(gPerUnit)
       const input = {
-        name:      normalized.name,
-        unit:      unit.trim(),
-        par_level: par,
-        category:  category.trim() || undefined,
+        name:       normalized.name,
+        unit:       unit.trim(),
+        par_level:  par,
+        category:   category.trim() || undefined,
+        g_per_unit: unit === 'un' && !isNaN(gPer) && gPer > 0 ? gPer : null,
       }
 
       let saved: Article
@@ -257,16 +317,21 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
               nameChangedAfterBlurRef.current = true
               setIsDirty(true)
               if (duplicateWarning) setDuplicateWarning(null)
-              // Hint de parsing em tempo real
+              // Inferência de unidade base em tempo real
+              if (!isEdit && !unitManuallySet.current) {
+                setUnit(normalizeArticleInput(val, aliases).unit)
+              }
+              // Hint de parsing em tempo real + seed para auto-fill do fornecedor
               const parsed = parseArticleInput(val)
               const hasExtracted =
                 parsed.detected_qty != null ||
                 parsed.detected_unit != null ||
                 parsed.detected_packaging != null
               setParsedHint(hasExtracted ? parsed : null)
+              parsedSeedRef.current = hasExtracted ? parsed : null
             }}
             onBlur={handleNameBlur}
-            onKeyDown={e => { if (e.key === 'Enter' && name.trim() && unit.trim()) handleSave() }}
+            onKeyDown={e => { if (e.key === 'Enter' && name.trim()) handleSave() }}
             style={inputStyle}
           />
           {duplicateWarning && (
@@ -362,24 +427,48 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           )}
         </div>
 
-        {/* Unit */}
+        {/* Unit — segmented control */}
         <div>
           <label style={labelStyle}>UNIDADE BASE</label>
-          <div style={{ display: 'flex', gap: 6 }}>
-            {(['g', 'mL', 'un'] as const).map(u => {
-              const isSelected  = unit === u
-              const suggested   = !unit.trim() ? normalizeArticleInput(name, aliases).unit : null
-              const isSuggested = suggested === u
+          <div style={{
+            display:      'flex',
+            border:       '1px solid var(--border)',
+            borderRadius: 8,
+            overflow:     'hidden',
+            background:   'var(--bg)',
+            width:        'fit-content',
+          }}>
+            {(['g', 'mL', 'un'] as const).map((u, i) => {
+              const isSelected = unit === u
               return (
                 <button
                   key={u}
                   type="button"
-                  onClick={() => { setUnit(u); setIsDirty(true) }}
+                  onClick={() => {
+                    setUnit(u)
+                    unitManuallySet.current = true
+                    setIsDirty(true)
+                    if (u === 'un' && !gPerUnit && name.trim()) {
+                      const hint = G_PER_UNIT_HINTS[normalizeKey(name)]
+                      if (hint) {
+                        setGPerUnit(String(hint))
+                        markAuto('gPerUnit')
+                      }
+                    }
+                  }}
                   style={{
-                    flex: 1, height: 44, borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'JetBrains Mono, monospace',
-                    border: isSelected ? '2px solid var(--action)' : isSuggested ? '2px solid var(--border-focus)' : '1px solid var(--border)',
-                    background: isSelected ? 'var(--action)' : 'var(--bg)',
-                    color: isSelected ? 'var(--text-on-primary)' : 'var(--text)',
+                    minWidth:    64,
+                    height:      44,
+                    padding:     '0 18px',
+                    border:      'none',
+                    borderLeft:  i > 0 ? '1px solid var(--border)' : 'none',
+                    background:  isSelected ? 'var(--action)' : 'transparent',
+                    color:       isSelected ? 'var(--text-on-primary)' : 'var(--text)',
+                    fontFamily:  'JetBrains Mono, monospace',
+                    fontSize:    14,
+                    fontWeight:  isSelected ? 700 : 500,
+                    cursor:      'pointer',
+                    transition:  'background 0.15s, color 0.15s',
                   }}
                 >
                   {u}
@@ -389,24 +478,105 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           </div>
         </div>
 
+        {/* g por unidade — só para artigos contáveis */}
+        {unit === 'un' && (() => {
+          const gNum = parseFloat(gPerUnit)
+          const hasValue = !isNaN(gNum) && gNum > 0
+          const outOfRange = hasValue && (gNum < 5 || gNum > 2000)
+          return (
+            <div>
+              <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>PESO POR UNIDADE (g)</span>
+                {autoFilled.has('gPerUnit') && (
+                  <span style={{
+                    fontFamily:    'JetBrains Mono, monospace',
+                    letterSpacing: '0.05em',
+                    color:         'var(--text-on-primary-subtle)',
+                    fontWeight:    400,
+                    fontSize:      10,
+                  }}>·auto</span>
+                )}
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="any"
+                  placeholder="ex: 52"
+                  value={gPerUnit}
+                  onChange={e => { setGPerUnit(e.target.value); unmarkAuto('gPerUnit'); setIsDirty(true) }}
+                  style={{ ...inputStyle, width: '40%' }}
+                />
+                {hasValue && (
+                  <span style={{
+                    fontSize:    12,
+                    color:       outOfRange ? 'var(--warning)' : 'var(--text-muted)',
+                    fontFamily:  'JetBrains Mono, monospace',
+                    flexShrink:  0,
+                  }}>
+                    1 un ≈ {gNum} g
+                  </span>
+                )}
+              </div>
+              {outOfRange && (
+                <p style={{ fontSize: 11, color: 'var(--warning)', marginTop: 4 }}>
+                  Valor fora do esperado (5–2000g) — confirma se correto
+                </p>
+              )}
+              {!gPerUnit && (
+                <p style={{ fontSize: 10, color: 'var(--text-subtle)', marginTop: 3 }}>
+                  Necessário para usar gramas nas fichas técnicas (ex: 150g ovos)
+                </p>
+              )}
+            </div>
+          )
+        })()}
+
         {/* Par Level */}
-        <div>
-          <label style={labelStyle}>
-            STOCK MÍNIMO{unit.trim() ? ` (em ${unit.trim()})` : ''}
-          </label>
-          <input
-            type="number"
-            min="0"
-            step="any"
-            placeholder="0"
-            value={parLevel}
-            onChange={e => { setParLevel(e.target.value); setIsDirty(true) }}
-            style={{ ...inputStyle, width: '40%' }}
-          />
-          <p style={{ fontSize: 10, color: 'var(--text-on-primary-subtle)', marginTop: 3 }}>
-            Abaixo deste valor o sistema sugere encomenda
-          </p>
-        </div>
+        {(() => {
+          // Fornecedor preferido válido → mostrar equivalência em stock_unit
+          const preferred = links.find(l =>
+            l.is_preferred &&
+            l.order_unit.trim() &&
+            parseFloat(l.conversion_factor) > 0
+          )
+          const factor    = preferred ? parseFloat(preferred.conversion_factor) : 0
+          const parNum    = parseFloat(parLevel)
+          const showEquiv = preferred && !isNaN(parNum) && parNum > 0 && factor > 0
+          const inStock   = showEquiv ? +(parNum / factor).toFixed(2) : 0
+
+          return (
+            <div>
+              <label style={labelStyle}>
+                STOCK MÍNIMO (em {unit})
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="0"
+                  value={parLevel}
+                  onChange={e => { setParLevel(e.target.value); setIsDirty(true) }}
+                  style={{ ...inputStyle, width: '40%' }}
+                />
+                {showEquiv && (
+                  <span style={{
+                    fontSize:   12,
+                    color:      'var(--text-on-primary-subtle)',
+                    fontFamily: 'JetBrains Mono, monospace',
+                    flexShrink: 0,
+                  }}>
+                    ≈ {inStock} {preferred!.order_unit}
+                  </span>
+                )}
+              </div>
+              <p style={{ fontSize: 10, color: 'var(--text-on-primary-subtle)', marginTop: 3 }}>
+                Abaixo deste valor o sistema sugere encomenda
+              </p>
+            </div>
+          )
+        })()}
 
         {/* Supplier links */}
         <div>
@@ -414,7 +584,24 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             FORNECEDORES
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {links.map(link => (
+            {links.map(link => {
+              // Aviso de inconsistência: mesmo order_unit, conversion_factor diferente
+              const currentFactor = parseFloat(link.conversion_factor)
+              const refLink = link.order_unit.trim()
+                ? links.find(l =>
+                    l.key !== link.key &&
+                    l.order_unit.trim() === link.order_unit.trim() &&
+                    parseFloat(l.conversion_factor) > 0
+                  )
+                : undefined
+              const conversionMismatch =
+                refLink &&
+                currentFactor > 0 &&
+                parseFloat(refLink.conversion_factor) !== currentFactor
+                  ? `Este artigo já usa 1 ${refLink.order_unit} = ${fmtFactor(refLink.conversion_factor)} noutro fornecedor`
+                  : null
+
+              return (
               <div
                 key={link.key}
                 style={{
@@ -466,12 +653,30 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                     />
                   </div>
                   <div style={{ flex: 1 }}>
-                    <label style={{ fontSize: 10, color: 'var(--text-subtle)', display: 'block', marginBottom: 2 }}>UN. COMPRA</label>
+                    <label style={{
+                      fontSize: 10, color: 'var(--text-subtle)',
+                      display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2,
+                    }}>
+                      <span>UN. COMPRA</span>
+                      {autoFilled.has(`orderUnit_${link.key}`) && (
+                        <span style={{
+                          fontFamily:    'JetBrains Mono, monospace',
+                          letterSpacing: '0.05em',
+                          color:         'var(--text-subtle)',
+                          fontWeight:    400,
+                        }}>·auto</span>
+                      )}
+                    </label>
                     <input
                       list={`units-order-link-${link.key}`}
                       placeholder="ex: caixa, saco…"
                       value={link.order_unit}
-                      onChange={e => { updateLink(link.key, { order_unit: e.target.value }); setIsDirty(true) }}
+                      onChange={e => {
+                        updateLink(link.key, { order_unit: e.target.value })
+                        unmarkAuto(`orderUnit_${link.key}`)
+                        setIsDirty(true)
+                        if (autoFillMsg?.key === link.key) setAutoFillMsg(null)
+                      }}
                       onBlur={e => updateLink(link.key, { order_unit: e.target.value.trim().toLowerCase() })}
                       style={cellInput}
                     />
@@ -480,6 +685,19 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                     </datalist>
                   </div>
                 </div>
+
+                {/* Auto-fill feedback */}
+                {autoFillMsg?.key === link.key && (
+                  <p style={{
+                    fontSize:    10,
+                    color:       'var(--text-subtle)',
+                    fontFamily:  'JetBrains Mono, monospace',
+                    letterSpacing: '0.04em',
+                    margin:      0,
+                  }}>
+                    {autoFillMsg.text}
+                  </p>
+                )}
 
                 {/* Row 3: advanced toggle */}
                 <button
@@ -498,18 +716,44 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                 {expandedLinks.has(link.key) && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 4, borderTop: '1px solid var(--border)' }}>
                     <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: 10, color: 'var(--text-subtle)', display: 'block', marginBottom: 2 }}>
-                        {link.order_unit.trim()
+                      <label style={{
+                        fontSize: 10, color: 'var(--text-subtle)',
+                        display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2,
+                      }}>
+                        <span>{link.order_unit.trim()
                           ? `Quantas ${unit || 'unidades'} vêm por ${link.order_unit.trim()}?`
-                          : 'QTD. POR EMBALAGEM'}
+                          : 'QTD. POR EMBALAGEM'}</span>
+                        {autoFilled.has(`conv_${link.key}`) && (
+                          <span style={{
+                            fontFamily:    'JetBrains Mono, monospace',
+                            letterSpacing: '0.05em',
+                            color:         'var(--text-subtle)',
+                            fontWeight:    400,
+                          }}>·auto</span>
+                        )}
                       </label>
                       <input
                         type="number" min="0.01" step="any" placeholder="ex: 6"
                         value={link.conversion_factor}
-                        onChange={e => { updateLink(link.key, { conversion_factor: e.target.value }); setIsDirty(true) }}
+                        onChange={e => {
+                          updateLink(link.key, { conversion_factor: e.target.value })
+                          unmarkAuto(`conv_${link.key}`)
+                          setIsDirty(true)
+                          if (autoFillMsg?.key === link.key) setAutoFillMsg(null)
+                        }}
                         style={cellInput}
                       />
                     </div>
+                    {conversionMismatch && (
+                      <p style={{
+                        fontSize:   10,
+                        color:      'var(--warning)',
+                        fontFamily: 'JetBrains Mono, monospace',
+                        margin:     0,
+                      }}>
+                        {conversionMismatch}
+                      </p>
+                    )}
                     <input
                       type="text"
                       placeholder="Ref. fornecedor (opcional)"
@@ -520,11 +764,60 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                   </div>
                 )}
               </div>
-            ))}
+              )
+            })}
           </div>
 
           <button
-            onClick={() => { setLinks(prev => [...prev, emptyLink()]); setIsDirty(true) }}
+            onClick={() => {
+              const seed       = parsedSeedRef.current
+              const link       = emptyLink()
+              let autoExpand   = false
+              let msg          = ''
+
+              const autoFields: string[] = []
+              if (seed) {
+                if (seed.detected_packaging) {
+                  link.order_unit = seed.detected_packaging
+                  autoFields.push(`orderUnit_${link.key}`)
+                }
+                if (seed.detected_qty != null && seed.detected_unit) {
+                  const factor = UNIT_TO_BASE_FACTOR[seed.detected_unit]
+                  if (factor != null) {
+                    link.conversion_factor = String(seed.detected_qty * factor)
+                    autoExpand = true
+                    autoFields.push(`conv_${link.key}`)
+                  }
+                } else if (seed.detected_qty != null && unit === 'un' && seed.detected_packaging) {
+                  // "Ovo Caixa 180" → 1 caixa = 180 un (qty pura, sem unidade explícita)
+                  link.conversion_factor = String(seed.detected_qty)
+                  autoExpand = true
+                  autoFields.push(`conv_${link.key}`)
+                }
+
+                const hasConversion = link.conversion_factor !== '1'
+                const hasPackaging  = !!link.order_unit
+                if (hasPackaging && hasConversion) {
+                  msg = `Auto: 1 ${link.order_unit} = ${fmtFactor(link.conversion_factor)}`
+                } else if (hasPackaging) {
+                  msg = `Auto: unidade de compra = ${link.order_unit}`
+                } else if (hasConversion && seed.detected_unit) {
+                  msg = `Auto: 1 ${seed.detected_unit} = ${fmtFactor(link.conversion_factor)}`
+                }
+              }
+
+              setLinks(prev => [...prev, link])
+              if (autoExpand) setExpandedLinks(prev => new Set([...prev, link.key]))
+              if (autoFields.length > 0) {
+                setAutoFilled(prev => new Set([...prev, ...autoFields]))
+              }
+              if (msg) {
+                setAutoFillMsg({ key: link.key, text: msg })
+                if (autoFillTimerRef.current) clearTimeout(autoFillTimerRef.current)
+                autoFillTimerRef.current = setTimeout(() => setAutoFillMsg(null), 2000)
+              }
+              setIsDirty(true)
+            }}
             style={{ width: '100%', height: 44, marginTop: 8, borderRadius: 8, border: `1px dashed var(--border-on-primary-medium)`, background: 'transparent', color: 'var(--text-on-primary-muted)', fontSize: 13, cursor: 'pointer' }}
           >
             + Adicionar Fornecedor

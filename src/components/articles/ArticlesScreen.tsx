@@ -10,6 +10,9 @@ import AliasManagerPanel from './AliasManagerPanel'
 
 type Mode = 'idle' | 'create' | 'edit' | 'bulk-import' | 'aliases'
 
+const normalize = (s: string) =>
+  s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+
 export default function ArticlesScreen() {
   const isMobile = useIsMobile()
 
@@ -35,15 +38,15 @@ export default function ArticlesScreen() {
 
   useEffect(() => { load() }, [load])
 
-  const filtered = useMemo(() =>
-    articles.filter(a =>
+  const filtered = useMemo(() => {
+    const q = normalize(search)
+    return articles.filter(a =>
       (showInactive || a.is_active) && (
-        a.name.toLowerCase().includes(search.toLowerCase()) ||
-        (a.category ?? '').toLowerCase().includes(search.toLowerCase())
+        normalize(a.name).includes(q) ||
+        normalize(a.category ?? '').includes(q)
       )
-    ),
-    [articles, search, showInactive]
-  )
+    )
+  }, [articles, search, showInactive])
 
   // Group by category
   const grouped = useMemo(() => {

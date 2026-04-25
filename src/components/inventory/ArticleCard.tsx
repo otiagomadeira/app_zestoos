@@ -1,7 +1,7 @@
 'use client'
 
 import type { CurrentStock } from '@/types/database'
-import { formatStockQty } from '@/lib/units'
+import { formatStockDisplay } from '@/lib/units'
 
 interface ArticleCardProps {
   article:      CurrentStock
@@ -92,7 +92,7 @@ export default function ArticleCard({
               fontWeight: 700,
               color:      isDirty ? 'var(--warning-text)' : statusColor,
             }}>
-              {formatStockQty(article.current_qty, article.unit)}
+              {formatStockDisplay(article.current_qty, article.unit, article.stock_unit, article.base_per_stock)}
             </span>
           </div>
         </div>
@@ -113,12 +113,12 @@ export default function ArticleCard({
           <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
             Par:{' '}
             <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--text-muted)' }}>
-              {formatStockQty(article.par_level, article.unit)}
+              {formatStockDisplay(article.par_level, article.unit, article.stock_unit, article.base_per_stock)}
             </span>
           </span>
           {isBelowPar && !isDirty && (
             <span style={{ fontSize: 11, color: 'var(--error)', fontFamily: 'JetBrains Mono, monospace' }}>
-              −{formatStockQty(Math.abs(article.diff_from_par), article.unit)}
+              −{formatStockDisplay(Math.abs(article.diff_from_par), article.unit, article.stock_unit, article.base_per_stock)}
             </span>
           )}
           {isDirty && (
@@ -148,7 +148,7 @@ export default function ArticleCard({
             <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
               atual:{' '}
               <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--text-muted)' }}>
-                {formatStockQty(article.current_qty, article.unit)}
+                {formatStockDisplay(article.current_qty, article.unit, article.stock_unit, article.base_per_stock)}
               </span>
             </span>
           </div>
@@ -177,7 +177,7 @@ export default function ArticleCard({
             }}
           />
           <span style={{ fontSize: 12, color: 'var(--text-subtle)', flexShrink: 0 }}>
-            {article.unit}
+            {article.stock_unit}
           </span>
           <button
             onClick={onConfirm}

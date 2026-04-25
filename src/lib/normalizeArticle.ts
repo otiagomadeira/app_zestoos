@@ -33,10 +33,27 @@ export interface NormalizedArticleInput {
 
 // ── Utilitários exportados (reutilizados por parseProductLines) ───────────────
 
+// Preposições/artigos PT que ficam em minúsculas (exceto na 1ª palavra)
+const PT_LOWERCASE_WORDS = new Set([
+  'de', 'da', 'do', 'dos', 'das',
+  'e', 'em', 'na', 'no', 'nas', 'nos',
+  'a', 'o', 'as', 'os',
+  'para', 'com',
+])
+
 export function toTitleCase(s: string): string {
-  return s
-    .trim()
-    .replace(/\S+/g, w => w.length > 0 ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w)
+  const trimmed = s.trim()
+  if (!trimmed) return trimmed
+  return trimmed
+    .split(/\s+/)
+    .map((w, i) => {
+      if (!w) return w
+      const lc = w.toLowerCase()
+      // Não-primeira palavra que seja preposição/artigo → minúscula
+      if (i > 0 && PT_LOWERCASE_WORDS.has(lc)) return lc
+      return w[0].toUpperCase() + w.slice(1).toLowerCase()
+    })
+    .join(' ')
 }
 
 export function cleanName(s: string): string {
@@ -49,6 +66,20 @@ const VOLUME_RE_LOC    = /(\d+[.,]?\d*)\s*(litros?|mililitros?|lt[s]?|cl|dl|ml|m
 const PACKAGING_RE_LOC = /(\d+[.,]?\d*)\s*(cx|caixas?|sacos?|sacola|packs?|pacotes?|vasos?|fardos?|molhos?|maços?|ramos?|garrafas?|garrafão|latas?|frascos?|bisnaga|tabuleiros?|baldes?|bote|emb|embalagens?)\b/i
 const BARE_NUMBER_RE   = /^(\d+[.,]?\d*)\s+/
 
+// Conectores PT removidos quando adjacentes a um label de embalagem stripped
+const NAME_CONNECTORS = new Set(['de', 'da', 'do', 'dos', 'das'])
+
+// Strip da palavra em `idx` + conectores adjacentes em ambos os lados
+function stripLabelAndConnectors(words: string[], idx: number): string[] {
+  let start = idx
+  let end   = idx + 1
+  while (end < words.length && NAME_CONNECTORS.has(words[end].toLowerCase())) end++
+  while (start > 0 && NAME_CONNECTORS.has(words[start - 1].toLowerCase())) start--
+  const out = [...words]
+  out.splice(start, end - start)
+  return out
+}
+
 export function extractName(line: string, cl: ClassifiedLine): string {
   if (cl.type === 'weight' || cl.type === 'volume') {
     const re    = cl.type === 'weight' ? WEIGHT_RE_LOC : VOLUME_RE_LOC
@@ -59,7 +90,10 @@ export function extractName(line: string, cl: ClassifiedLine): string {
     if (cl.label) {
       const words = before.split(/\s+/).filter(Boolean)
       const idx   = words.map(w => w.toLowerCase()).lastIndexOf(cl.label!)
-      if (idx >= 0) words.splice(idx, 1)
+      if (idx >= 0) {
+        const cleaned = stripLabelAndConnectors(words, idx)
+        return cleaned.join(' ').trim() || after || line
+      }
       return words.join(' ') || after || line
     }
     return before || after || line
@@ -77,10 +111,19 @@ export function extractName(line: string, cl: ClassifiedLine): string {
     return line.replace(BARE_NUMBER_RE, '').trim() || line
   }
 
-  // type='unit', normalized=false (sem número) — strip container words (ex: "Mel frasco" → "Mel")
-  const words   = line.split(/\s+/).filter(Boolean)
+  // type='unit', normalized=false (sem número) — strip container words + número avulso
+  // Cobre: "Mel frasco" → "Mel"; "Ovo Caixa 180" → "Ovo"
+  const words = line.split(/\s+/).filter(Boolean)
+  const idx   = words.findIndex(w => CONTAINER_CONTEXT_WORDS.includes(w.toLowerCase()))
+  if (idx >= 0) {
+    const stripped = stripLabelAndConnectors(words, idx)
+    // Remove qualquer número solto que tenha sobrado (ex: "180" depois de "Caixa")
+    const cleaned = stripped.filter(w => !/^\d+[.,]?\d*$/.test(w))
+    return cleaned.length > 0 ? cleaned.join(' ') : line
+  }
+  // Fallback antigo: filter inline (sem strip de conectores ou números)
   const cleaned = words.filter(w => !CONTAINER_CONTEXT_WORDS.includes(w.toLowerCase()))
-  return (cleaned.length > 0 ? cleaned.join(' ') : line)
+  return cleaned.length > 0 ? cleaned.join(' ') : line
 }
 
 // ── Palavras-contexto que indicam unit='un' quando não há quantidade explícita
@@ -116,26 +159,22 @@ export function normalizeArticleInput(
   const nameNormalized = titleName.length > 0 && name !== titleName
 
   // Determinar unidade base
-  let unit: 'g' | 'mL' | 'un' = cl.base_unit
+  // Regra: container words (frasco, saco, lata…) = order_unit, nunca base_unit.
+  let unit: 'g' | 'mL' | 'un'
   let unitFromFallback = false
 
-  if (cl.type === 'unit' && !cl.normalized) {
-    // Sem quantidade explícita no input — inferir unidade por contexto
-    const lowerRaw = trimmed.toLowerCase()
-    const hasContainer = CONTAINER_CONTEXT_WORDS.some(w => {
-      const re = new RegExp(`\\b${w}\\b`)
-      return re.test(lowerRaw)
-    })
-
-    if (hasContainer) {
-      unit = 'un'
-    } else {
-      const suggested = suggestUnit(name)
-      if (suggested) {
-        unit = suggested
-        unitFromFallback = suggested !== 'g'  // 'g' é o default sólido, não é fallback incerto
-      }
-    }
+  if (cl.type === 'weight') {
+    unit = 'g'
+  } else if (cl.type === 'volume') {
+    unit = 'mL'
+  } else if (cl.type === 'unit' && cl.normalized) {
+    // Número avulso sem unidade (ex: "5 ovos") = contagem
+    unit = 'un'
+  } else {
+    // packaging | unit sem número — inferir base_unit do produto, ignorar container words
+    const kw = suggestUnit(name)
+    unit = kw ?? 'g'
+    unitFromFallback = !!kw && kw !== 'g'
   }
 
   // Sugerir categoria com contexto completo

@@ -2,6 +2,20 @@ const WEIGHT_RE    = /(\d+[.,]?\d*)\s*(kg|g|mg|gr|grs|gramas?)\b/i
 const VOLUME_RE    = /(\d+[.,]?\d*)\s*(litros?|mililitros?|lt[s]?|cl|dl|ml|mL|l)\b/i
 const PACKAGING_RE = /(\d+[.,]?\d*)\s*(cx|caixas?|sacos?|sacola|packs?|pacotes?|vasos?|fardos?|molhos?|maços?|ramos?|garrafas?|garrafão|latas?|frascos?|bisnaga|tabuleiros?|baldes?|bote|emb|embalagens?)\b/i
 
+// Variantes → canonical label. Palavras fora deste mapa → null (não guardar lixo).
+const PACKAGING_MAP: Record<string, string> = {
+  frasco: 'frasco', frascos: 'frasco', 'frasc.': 'frasco',
+  cx: 'caixa', caixa: 'caixa', caixas: 'caixa',
+  saco: 'saco', sacos: 'saco', sacola: 'saco',
+  balde: 'balde', baldes: 'balde',
+  garrafa: 'garrafa', garrafas: 'garrafa', garrafão: 'garrafa',
+  lata: 'lata', latas: 'lata',
+  pacote: 'pacote', pacotes: 'pacote', pack: 'pack', packs: 'pack',
+  tabuleiro: 'tabuleiro', tabuleiros: 'tabuleiro',
+  fardo: 'fardo', fardos: 'fardo',
+  bisnaga: 'bisnaga',
+}
+
 // Container words sem número (ex: "frasco" em "Mel frasco")
 const CONTAINER_WORDS = new Set([
   'lata', 'latas', 'frasco', 'frascos', 'bisnaga',
@@ -20,6 +34,10 @@ const CONTAINER_WORDS = new Set([
   'ramo', 'ramos',
   'bote',
 ])
+
+// Conectores PT que aparecem entre packaging e qty (ex: "frasco de 1KG")
+// Removidos quando adjacentes a um label de embalagem stripped.
+const CONNECTORS = new Set(['de', 'da', 'do', 'dos', 'das'])
 
 function parseQty(raw: string): number {
   return parseFloat(raw.replace(',', '.'))
@@ -66,19 +84,34 @@ export function parseArticleInput(raw: string): ParsedArticleInput {
     }
   }
 
-  // 3. Packaging com número (ex: "2 frascos") → packaging
+  // 3. Packaging com número (ex: "2 frascos") → packaging normalizado
   const pm = working.match(PACKAGING_RE)
   if (pm) {
-    detected_packaging = pm[2].toLowerCase()
+    detected_packaging = PACKAGING_MAP[pm[2].toLowerCase()] ?? null
     working            = working.replace(pm[0], ' ')
   } else {
-    // 4. Container word sem número (ex: "frasco" em "Mel frasco")
+    // 4. Container word — strip palavra + conectores adjacentes (ex: "Mel frasco de", "Ovo Caixa")
     const words = working.split(/\s+/).filter(Boolean)
     const idx   = words.findIndex(w => CONTAINER_WORDS.has(w.toLowerCase()))
     if (idx >= 0) {
-      detected_packaging = words[idx].toLowerCase()
-      words.splice(idx, 1)
+      detected_packaging = PACKAGING_MAP[words[idx].toLowerCase()] ?? null
+      // Estender remoção a conectores adjacentes (ex: "Frasco de" depois do nome)
+      let start = idx
+      let end   = idx + 1
+      while (end < words.length && CONNECTORS.has(words[end].toLowerCase())) end++
+      while (start > 0 && CONNECTORS.has(words[start - 1].toLowerCase())) start--
+      words.splice(start, end - start)
       working = words.join(' ')
+    }
+  }
+
+  // 5. Se temos packaging mas ainda sem qty, procurar número avulso adjacente
+  //    (ex: "Ovo Caixa 180" → packaging=caixa, qty=180; sem unidade = base_unit count)
+  if (detected_packaging && detected_qty == null) {
+    const bare = working.match(/(\d+[.,]?\d*)/)
+    if (bare) {
+      detected_qty = parseQty(bare[1])
+      working      = working.replace(bare[0], ' ')
     }
   }
 
