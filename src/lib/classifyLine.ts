@@ -73,8 +73,12 @@ const VOLUME_RE = /(\d+[.,]?\d*)\s*(litros?|mililitros?|lt[s]?|cl|dl|ml|mL|l)\b/
  * Embalagem como prefixo de número: "4cx", "3 saco", "2 pack", etc.
  * Grupos: (1) número  (2) label de embalagem
  * Apenas activo quando peso/volume NÃO foram detectados primeiro.
+ *
+ * Lookbehind `(?<![\dx×])` rejeita match no meio de um número ou de uma
+ * dimensão "AxB" — ex.: "20x30 caixa" não pode virar "30 caixa" nem "0 caixa".
+ * É 1 char, fixed-length, suportado em todos os browsers-alvo do app.
  */
-const PACKAGING_RE = /(\d+[.,]?\d*)\s*(cx|caixas?|sacos?|sacola|packs?|pacotes?|vasos?|fardos?|molhos?|maços?|ramos?|garrafas?|garrafão|latas?|frascos?|bisnaga|tabuleiros?|baldes?|bote|emb|embalagens?|conservas?|enlatad[oa]s?)\b/i
+const PACKAGING_RE = /(?<![\dx×])(\d+[.,]?\d*)\s*(cx|caixas?|sacos?|sacola|packs?|pacotes?|vasos?|fardos?|molhos?|maços?|ramos?|garrafas?|garrafão|latas?|frascos?|bisnaga|tabuleiros?|baldes?|bote|emb|embalagens?|conservas?|enlatad[oa]s?|blocos?)\b/i
 
 /**
  * Multipack: "6x1L", "12x500g", "cx 6x1L", "caixa 12x500g"
@@ -112,6 +116,7 @@ const PACKAGING_LABELS = new Set([
   // 'enlatado' canonicaliza para 'lata' em PACKAGING_MAP (articleDraft.ts).
   'conserva', 'conservas',
   'enlatado', 'enlatada', 'enlatados', 'enlatadas',
+  'bloco', 'blocos',
 ])
 
 // ── Utilitário interno ───────────────────────────────────────────────────────

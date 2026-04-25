@@ -105,6 +105,26 @@ const CASES: Case[] = [
     expect: { category: 'Frutas e Legumes' } },
   { tag: 'REGRESSION', input: 'acucar saco 1kg',
     expect: { category: 'Mercearia', orderUnit: 'saco', conversionFactor: 1000 } },
+
+  // ── Fase A: bloco + dimensões + label-first ────────────────────────
+  // Nota: DICT canoniza 'manteiga sem sal' → 'Manteiga sem Sal' (preposição
+  // "sem" minúscula, escolha estilística PT existente no projeto).
+  { tag: 'CRITICAL', input: 'manteiga sem sal bloco 1kg',
+    expect: { name: 'Manteiga sem Sal', unit: 'g', category: 'Lacticínios e Ovos',
+              orderUnit: 'bloco', conversionFactor: 1000 } },
+  { tag: 'CRITICAL', input: 'sacos vacuo 20x30 caixa 100 uni',
+    expect: { name: 'Sacos Vacuo 20x30', unit: 'un', category: 'Embalagens e Descartáveis',
+              orderUnit: 'caixa', conversionFactor: 100 } },
+  { tag: 'CRITICAL', input: 'caixa 180 uni ovos',
+    expect: { name: 'Ovos', unit: 'un', category: 'Lacticínios e Ovos',
+              orderUnit: 'caixa', conversionFactor: 180 } },
+  { tag: 'CRITICAL', input: 'caixa 60 uni limao',
+    expect: { name: 'Limão', unit: 'un', category: 'Frutas e Legumes',
+              orderUnit: 'caixa', conversionFactor: 60 } },
+  { tag: 'CRITICAL', input: 'caixa 6x1L leite meio gordo',
+    expect: { name: 'Leite Meio Gordo', unit: 'mL', category: 'Lacticínios e Ovos',
+              orderUnit: 'caixa', conversionFactor: 6000,
+              multipackCount: 6, multipackPerPack: 1000, hint: '6 x 1 L · caixa' } },
 ]
 
 let pass = 0

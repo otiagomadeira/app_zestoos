@@ -79,6 +79,7 @@ const PACKAGING_MAP: Record<string, string> = {
   enlatado: 'lata', enlatada: 'lata', enlatados: 'lata', enlatadas: 'lata',
   // 'conserva' fica como label próprio: tipo de produto distinto, sem assumir 'lata'.
   conserva: 'conserva', conservas: 'conserva',
+  bloco: 'bloco', blocos: 'bloco',
 }
 
 const CONNECTORS = new Set(['de', 'da', 'do', 'dos', 'das'])

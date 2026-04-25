@@ -63,9 +63,10 @@ export function cleanName(s: string): string {
 // Regexes de localização posicional (espelham classifyLine para extração de nome)
 const WEIGHT_RE_LOC    = /(\d+[.,]?\d*)\s*(kg|g|mg|gr|grs|gramas?)\b/i
 const VOLUME_RE_LOC    = /(\d+[.,]?\d*)\s*(litros?|mililitros?|lt[s]?|cl|dl|ml|mL|l)\b/i
-const PACKAGING_RE_LOC = /(\d+[.,]?\d*)\s*(cx|caixas?|sacos?|sacola|packs?|pacotes?|vasos?|fardos?|molhos?|maços?|ramos?|garrafas?|garrafão|latas?|frascos?|bisnaga|tabuleiros?|baldes?|bote|emb|embalagens?|conservas?|enlatad[oa]s?)\b/i
+// Lookbehind `(?<![\dx×])` impede match no meio de um número ou de uma
+// dimensão "AxB" — espelha PACKAGING_RE em classifyLine.
+const PACKAGING_RE_LOC = /(?<![\dx×])(\d+[.,]?\d*)\s*(cx|caixas?|sacos?|sacola|packs?|pacotes?|vasos?|fardos?|molhos?|maços?|ramos?|garrafas?|garrafão|latas?|frascos?|bisnaga|tabuleiros?|baldes?|bote|emb|embalagens?|conservas?|enlatad[oa]s?|blocos?)\b/i
 const MULTIPACK_RE_LOC = /(\d+)\s*[x×]\s*(\d+[.,]?\d*)\s*(kg|g|mg|gr|grs|gramas?|litros?|mililitros?|lt[s]?|cl|dl|ml|mL|l)\b/i
-const BARE_NUMBER_RE   = /^(\d+[.,]?\d*)\s+/
 
 // Conectores PT removidos quando adjacentes a um label de embalagem stripped.
 // 'em' incluído para limpar "Café em saco" → "Café" (não deixar "em" órfão).
@@ -138,29 +139,41 @@ export function extractName(line: string, cl: ClassifiedLine): string {
     return before || after || line
   }
 
-  if (cl.type === 'unit' && cl.qty > 0) {
-    const stripped = line.replace(BARE_NUMBER_RE, '').trim() || line
-    const cleaned  = stripped
-      .split(/\s+/)
-      .filter(w => !UNIT_QTY_TOKENS.has(w.toLowerCase()))
-      .join(' ')
-    return cleaned || stripped
+  // type='unit' (com ou sem qty) — strip do par "container + número adjacente"
+  // quando existe; senão strip de container words standalone.
+  //
+  // Por que adjacent-to-number e não primeiro-container-encontrado:
+  //   "Sacos vacuo 20x30 caixa 100 uni" — "sacos" é o nome, não embalagem.
+  //   Só "caixa 100" (container + número) é que representa a embalagem real.
+  //
+  // "20x30" é preservado porque o filtro de bare numbers usa /^\d+[.,]?\d*$/
+  // (não casa com tokens que contêm 'x').
+  const words        = line.split(/\s+/).filter(Boolean)
+  const isBareNumber = (w: string) => /^\d+[.,]?\d*$/.test(w)
+  const isContainer  = (w: string) => CONTAINER_CONTEXT_WORDS.includes(w.toLowerCase())
+
+  let removeStart = -1
+  let removeEnd   = -1
+  for (let i = 0; i < words.length; i++) {
+    if (!isContainer(words[i])) continue
+    let j = i + 1
+    while (j < words.length && NAME_CONNECTORS.has(words[j].toLowerCase())) j++
+    if (j < words.length && isBareNumber(words[j])) {
+      removeStart = i
+      removeEnd   = j + 1
+      break
+    }
   }
 
-  // type='unit', normalized=false (sem número) — strip container words + número avulso + uni tokens
-  // Cobre: "Mel frasco" → "Mel"; "Ovo caixa 180 uni" → "Ovo"; "Manjericão vaso 1 uni" → "Manjericão"
-  const words = line.split(/\s+/).filter(Boolean)
-  const idx   = words.findIndex(w => CONTAINER_CONTEXT_WORDS.includes(w.toLowerCase()))
-  if (idx >= 0) {
-    const stripped = stripLabelAndConnectors(words, idx)
-    const cleaned  = stripped
-      .filter(w => !/^\d+[.,]?\d*$/.test(w))
-      .filter(w => !UNIT_QTY_TOKENS.has(w.toLowerCase()))
-    return cleaned.length > 0 ? cleaned.join(' ') : line
+  let cleaned: string[]
+  if (removeStart >= 0) {
+    cleaned = [...words.slice(0, removeStart), ...words.slice(removeEnd)]
+  } else {
+    cleaned = words.filter(w => !isContainer(w))
   }
-  const cleaned = words
-    .filter(w => !CONTAINER_CONTEXT_WORDS.includes(w.toLowerCase()))
+  cleaned = cleaned
     .filter(w => !UNIT_QTY_TOKENS.has(w.toLowerCase()))
+    .filter(w => !isBareNumber(w))
   return cleaned.length > 0 ? cleaned.join(' ') : line
 }
 
@@ -186,6 +199,7 @@ const CONTAINER_CONTEXT_WORDS = [
   'maço', 'maços',
   'ramo', 'ramos',
   'bote',
+  'bloco', 'blocos',
 ]
 
 // ── API pública ───────────────────────────────────────────────────────────────
