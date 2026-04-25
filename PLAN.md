@@ -11,13 +11,13 @@ Fechar loop real: **Contar → Decidir → Encomendar** (sem fricção)
 
 ---
 
-## MILESTONE 1 — PRODUTOS
+## MILESTONE 1 — PRODUTOS ✅ FECHADO (Abril 2026)
 
 ### Criação
 - [x] Criar produto em <10s
 - [x] Nome obrigatório
 - [x] Unidade default automática (quick-pick: g / mL / un)
-- [ ] Categoria rápida (sem scroll)
+- [ ] Categoria rápida (sem scroll) — adiado para próximo ciclo
 
 ### Bulk Import
 - [x] Colar lista sem crash
@@ -28,9 +28,11 @@ Fechar loop real: **Contar → Decidir → Encomendar** (sem fricção)
   - [x] "2kg tomate"
   - [x] "4 leite"
   - [x] "1cx ovos"
-  - [x] Parser estabilizado — `npm run test:parser` cobre 25 casos
-        (peso/volume/multipack/conserva/enlatado/uni). Pronto para
-        validação real com 30 produtos do Zazzaro.
+  - [x] Parser estabilizado — `npm run test:parser` cobre 39 casos
+        (peso/volume/multipack/conserva/enlatado/uni/dimensões/
+        label-first/label-after/multipack-equivalente).
+  - [x] Validado com lista real de 55 produtos: 46 prontos · 7
+        duplicados pré-existentes · 0 a resolver · 2 size variants.
 - [x] Preview editável
   - [x] Nome editável
   - [x] Unidade editável
@@ -48,9 +50,17 @@ Fechar loop real: **Contar → Decidir → Encomendar** (sem fricção)
 ### UX
 - [x] Input sempre focado (autoFocus no create)
 - [x] Enter cria produto (quando nome + unidade preenchidos)
-- [ ] Zero fricção geral (testar com dados reais)
+- [x] Zero fricção geral (validado com dados reais Zazzaro)
 
-**DONE** = consigo criar/importar 30 produtos em <5min
+**DONE** = consigo criar/importar 30 produtos em <5min ✓
+
+### Notas para próximo ciclo (não bloqueiam)
+- Bug conhecido: `lower.includes(w)` em `categoryKeywords.ts` produz falsos
+  positivos por substring (ex.: "espargos" → Peixe e Marisco via "pargo").
+  Resolver com word-boundary matching quando reabrir Artigos.
+- Containers de cauda longa não suportados (bola, peça, vácuo, inteiro).
+  Editáveis no preview. Não adicionar sem testar regressões (ex.: "Bola de
+  Berlim").
 
 ---
 
