@@ -3,6 +3,8 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import type { CurrentStock } from '@/types/database'
 import { fetchCurrentStock, saveStockCount } from '@/lib/supabase'
+import { useCurrentOrgId } from '@/hooks/useCurrentOrgId'
+import { useInventorySession } from '@/hooks/useInventorySession'
 import ArticleCard from './ArticleCard'
 import Numpad from './Numpad'
 
@@ -17,7 +19,10 @@ export default function InventoryScreen() {
   // evita janela em que dois cliques sucessivos disparem dois saveStockCount
   // antes de savingId atualizar.
   const submitInFlight = useRef(false)
-  const [countedThisSession, setCountedThisSession] = useState<Set<string>>(new Set())
+  // Sessão de contagem persistida em localStorage por org+data. Recarregar
+  // mantém artigos contados marcados; à meia-noite local começa sessão nova.
+  const orgId = useCurrentOrgId()
+  const { counted: countedThisSession, addCounted } = useInventorySession(orgId)
   const [search,      setSearch]      = useState('')
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
   const [saveNoChange, setSaveNoChange] = useState<string | null>(null)
@@ -129,7 +134,7 @@ export default function InventoryScreen() {
             : a
         ))
         setSaveSuccess(articleId)
-        setCountedThisSession(prev => new Set([...prev, articleId]))
+        addCounted(articleId)
         setTimeout(() => setSaveSuccess(null), 1500)
         advanceToNext(articleId)
       } else {
@@ -143,14 +148,14 @@ export default function InventoryScreen() {
       setSavingId(null)
       submitInFlight.current = false
     }
-  }, [selectedArticle, numpadValue, advanceToNext])
+  }, [selectedArticle, numpadValue, advanceToNext, addCounted])
 
   const handleSkip = useCallback(() => {
     if (!selectedArticle) return
     const articleId = selectedArticle.article_id
-    setCountedThisSession(prev => new Set([...prev, articleId]))
+    addCounted(articleId)
     advanceToNext(articleId)
-  }, [selectedArticle, advanceToNext])
+  }, [selectedArticle, advanceToNext, addCounted])
 
   const belowPar = articles.filter(a => a.current_qty < a.par_level).length
 
