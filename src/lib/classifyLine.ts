@@ -144,6 +144,74 @@ function findAdjacentPackagingLabel(line: string, matchIndex: number): string | 
   return PACKAGING_LABELS.has(target) ? target : null
 }
 
+/**
+ * Análogo a findAdjacentPackagingLabel mas olha DEPOIS do match.
+ * Cobre o padrão "1lt caixa …" — peso/volume primeiro, label a seguir.
+ */
+function findAdjacentPackagingLabelAfter(line: string, matchEnd: number): string | null {
+  const after = line.slice(matchEnd).trim()
+  if (!after) return null
+  const words = after.split(/\s+/)
+  let i = 0
+  while (i < words.length && LABEL_CONNECTORS.has(words[i].toLowerCase())) i++
+  const target = words[i]?.toLowerCase() ?? ''
+  return PACKAGING_LABELS.has(target) ? target : null
+}
+
+/**
+ * Detecta padrão `<N> uni|unidade(s)?` no resto da linha, após o label.
+ * Usado para reconhecer multipack-equivalente "1lt caixa 6 uni leite ..."
+ * — equivalente semântico a "6x1L caixa".
+ */
+const ALT_MULTIPACK_COUNT_RE = /(\d+)\s+(?:uni|unis|unid|unids|unidades?)\b/i
+
+/**
+ * Constrói a ClassifiedLine para weight/volume, escolhendo label adjacente
+ * antes ou depois e detectando multipack-equivalente quando há os 3 sinais
+ * (qty+unit, label-after, "<N> uni" no resto).
+ */
+function resolveQtyMatch(
+  line:        string,
+  matchIndex:  number,
+  matchLength: number,
+  type:        'weight' | 'volume',
+  baseUnit:    'g' | 'mL',
+  qty:         number,
+): ClassifiedLine {
+  let label    = findAdjacentPackagingLabel(line, matchIndex)
+  let total    = qty
+  let multipack: { count: number; perPack: number } | undefined
+
+  if (!label) {
+    const labelAfter = findAdjacentPackagingLabelAfter(line, matchIndex + matchLength)
+    if (labelAfter) {
+      label = labelAfter
+      // Procurar "<N> uni" no resto da linha (depois do label) — multipack-equivalente.
+      // Ex.: "1lt caixa 6 uni leite m.g." → caixa de 6 × 1 L.
+      const afterLabel = line
+        .slice(matchIndex + matchLength)
+        .replace(/^\s*(?:de|da|do|dos|das)\s+/i, '')   // skip connector
+        .replace(new RegExp(`^${labelAfter}\\b`, 'i'), '')
+      const altMatch = afterLabel.match(ALT_MULTIPACK_COUNT_RE)
+      if (altMatch) {
+        const count = parseFloat(altMatch[1])
+        multipack = { count, perPack: qty }
+        total     = count * qty
+      }
+    }
+  }
+
+  return {
+    type,
+    base_unit: baseUnit,
+    qty: total,
+    label,
+    normalized: true,
+    requires_configuration: false,
+    ...(multipack ? { multipack } : {}),
+  }
+}
+
 // ── API pública ──────────────────────────────────────────────────────────────
 
 /**
@@ -209,9 +277,8 @@ export function classifyLine(raw: string): ClassifiedLine {
     const rawQty  = parseQty(weightMatch[1])
     const rawUnit = weightMatch[2].toLowerCase()
     const qty     = rawUnit === 'kg' ? rawQty * 1000 : rawQty
-    const label   = findAdjacentPackagingLabel(line, weightMatch.index)
 
-    return { type: 'weight', base_unit: 'g', qty, label, normalized: true, requires_configuration: false }
+    return resolveQtyMatch(line, weightMatch.index, weightMatch[0].length, 'weight', 'g', qty)
   }
 
   // ── 3. Volume ──────────────────────────────────────────────────────────────
@@ -226,9 +293,7 @@ export function classifyLine(raw: string): ClassifiedLine {
     else if (rawUnit === 'dl') qty = rawQty * 100
     // ml / mililitros → direto
 
-    const label = findAdjacentPackagingLabel(line, volumeMatch.index)
-
-    return { type: 'volume', base_unit: 'mL', qty, label, normalized: true, requires_configuration: false }
+    return resolveQtyMatch(line, volumeMatch.index, volumeMatch[0].length, 'volume', 'mL', qty)
   }
 
   // ── 4. Embalagem como prefixo numérico ────────────────────────────────────

@@ -125,6 +125,18 @@ const CASES: Case[] = [
     expect: { name: 'Leite Meio Gordo', unit: 'mL', category: 'Lacticínios e Ovos',
               orderUnit: 'caixa', conversionFactor: 6000,
               multipackCount: 6, multipackPerPack: 1000, hint: '6 x 1 L · caixa' } },
+
+  // ── Fase B: multipack-equivalente "qty unit + label + count uni" ───
+  // Padrão: weight/volume + label adjacente DEPOIS + N uni no resto
+  // → trata como multipack {count:N, perPack:qty}.
+  { tag: 'CRITICAL', input: '1lt caixa 6 uni leite m.g.',
+    expect: { unit: 'mL', category: 'Lacticínios e Ovos',
+              orderUnit: 'caixa', conversionFactor: 6000,
+              multipackCount: 6, multipackPerPack: 1000, hint: '6 x 1 L · caixa' } },
+  { tag: 'CRITICAL', input: '1L caixa 6 uni leite sem lactose',
+    expect: { name: 'Leite Sem Lactose', unit: 'mL', category: 'Lacticínios e Ovos',
+              orderUnit: 'caixa', conversionFactor: 6000,
+              multipackCount: 6, multipackPerPack: 1000, hint: '6 x 1 L · caixa' } },
 ]
 
 let pass = 0

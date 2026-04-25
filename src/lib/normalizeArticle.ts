@@ -120,13 +120,30 @@ export function extractName(line: string, cl: ClassifiedLine): string {
       if (CONTAINER_KEEP_IN_NAME.has(cl.label)) {
         return before || after || line
       }
-      const words = before.split(/\s+/).filter(Boolean)
-      const idx   = words.map(w => w.toLowerCase()).lastIndexOf(cl.label!)
-      if (idx >= 0) {
-        const cleaned = stripLabelAndConnectors(words, idx)
+      // Label antes do qty: strip do label de `before`.
+      const beforeWords = before.split(/\s+/).filter(Boolean)
+      const idxBefore   = beforeWords.map(w => w.toLowerCase()).lastIndexOf(cl.label!)
+      if (idxBefore >= 0) {
+        const cleaned = stripLabelAndConnectors(beforeWords, idxBefore)
         return cleaned.join(' ').trim() || after || line
       }
-      return words.join(' ') || after || line
+      // Label depois do qty (multipack-equivalente "1lt caixa 6 uni …"):
+      // strip do label + número adjacente + token "uni" em `after`.
+      const afterWords = after.split(/\s+/).filter(Boolean)
+      const idxAfter   = afterWords.map(w => w.toLowerCase()).indexOf(cl.label!)
+      if (idxAfter >= 0) {
+        let endIdx = idxAfter + 1
+        if (endIdx < afterWords.length && /^\d+[.,]?\d*$/.test(afterWords[endIdx])) {
+          endIdx++
+          if (endIdx < afterWords.length && UNIT_QTY_TOKENS.has(afterWords[endIdx].toLowerCase())) {
+            endIdx++
+          }
+        }
+        const cleanedAfter = [...afterWords.slice(0, idxAfter), ...afterWords.slice(endIdx)]
+        const result = [...beforeWords, ...cleanedAfter].join(' ').trim()
+        return result || before || after || line
+      }
+      return beforeWords.join(' ') || after || line
     }
     return before || after || line
   }
@@ -241,7 +258,15 @@ export function normalizeArticleInput(
 
   // Override: token explícito "uni"/"unidade(s)" no input → forçar unit='un'.
   // Resolve "Alface iceberg caixa 12 uni" (caía em fallback 'g') e "Manjericão vaso 1 uni".
-  if (/\b(uni|unis|unid|unids|unidade|unidades)\b/i.test(trimmed) && unit !== 'un') {
+  // Excepção: se peso/volume foi detectado primeiro, o "uni" é o count de
+  // multipack-equivalente (ex.: "1lt caixa 6 uni leite m.g.") — base_unit
+  // permanece g/mL.
+  if (
+    cl.type !== 'weight' &&
+    cl.type !== 'volume' &&
+    /\b(uni|unis|unid|unids|unidade|unidades)\b/i.test(trimmed) &&
+    unit !== 'un'
+  ) {
     unit = 'un'
     unitFromFallback = false
   }
