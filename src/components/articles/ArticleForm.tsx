@@ -6,7 +6,7 @@ import {
   createArticle, updateArticle, toggleArticleActive,
   fetchAllSuppliers, fetchArticleSuppliers, saveArticleSuppliers,
 } from '@/lib/supabase'
-import { ORDER_UNITS, formatUnit } from '@/lib/units'
+import { ORDER_UNITS, formatUnit, formatStockQty } from '@/lib/units'
 import { ARTICLE_CATEGORIES, suggestCategory } from '@/lib/categoryKeywords'
 import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
 import { normalizeArticleInput } from '@/lib/normalizeArticle'
@@ -174,6 +174,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   const [gPerUnitExpanded,   setGPerUnitExpanded]  = useState(false)
   const [unit,               setUnit]              = useState<'g' | 'mL' | 'un'>((existing?.unit as 'g' | 'mL' | 'un') ?? 'g')
   const [parLevel,           setParLevel]          = useState(existing ? String(existing.par_level) : '')
+  const [parLevelDisplay,    setParLevelDisplay]   = useState('')
   const [gPerUnit,           setGPerUnit]          = useState(existing?.g_per_unit != null ? String(existing.g_per_unit) : '')
   const [links,              setLinks]             = useState<LinkRow[]>([])
   const [suppliers,          setSuppliers]         = useState<Supplier[]>([])
@@ -194,6 +195,36 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   const parsedSeedRef           = useRef<ArticleDraft | null>(null)
   const autoFillTimerRef        = useRef<ReturnType<typeof setTimeout> | null>(null)
   const unitManuallySet         = useRef(!!existing)
+
+  // ── Stock Mínimo: fonte de unidade (preferred → qualquer link → seed → base) ──
+  // Usada para mostrar/inputar par level na unidade que o chef pensa (caixa, frasco)
+  // mantendo par_level guardado em base_unit.
+  const parPreferredLink = links.find(l =>
+    l.is_preferred && l.order_unit.trim() && parseFloat(l.conversion_factor) > 0
+  )
+  const parFallbackLink = !parPreferredLink
+    ? links.find(l => l.order_unit.trim() && parseFloat(l.conversion_factor) > 0)
+    : undefined
+  const parSeed = (!parPreferredLink && !parFallbackLink)
+    ? parsedHint?.supplierSeed
+    : undefined
+  const parSeedHasFactor = !!parSeed?.order_unit && parSeed.conversion_factor != null
+  const parMinUnit = parPreferredLink?.order_unit
+    ?? parFallbackLink?.order_unit
+    ?? (parSeedHasFactor ? parSeed!.order_unit : null)
+  const parMinFactor = parPreferredLink
+    ? parseFloat(parPreferredLink.conversion_factor)
+    : parFallbackLink
+    ? parseFloat(parFallbackLink.conversion_factor)
+    : parSeedHasFactor
+    ? parSeed!.conversion_factor!
+    : 1
+  const parUseOrderUnit = !!parMinUnit && parMinFactor > 0
+
+  // Esconder bloco "Mede em" quando o parser detetou unidade base explícita
+  // (weight/volume/unit com qty). Em edição mantém visível porque o artigo
+  // já está guardado e o chef pode querer ajustar.
+  const hideUnitBlock = !isEdit && parsedHint?.detected_qty != null
 
   const markAuto = (field: string) => setAutoFilled(prev => {
     if (prev.has(field)) return prev
@@ -274,6 +305,24 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   useEffect(() => {
     if (unit === 'un' && !gPerUnit) setGPerUnitExpanded(true)
   }, [unit, gPerUnit])
+
+  // Sincronizar display do Stock Mínimo quando a fonte de unidade muda
+  // (e.g., adiciona/remove fornecedor, muda preferred ou conversion_factor).
+  // Não inclui parLevel nas deps — durante digitação, o display é controlado
+  // pelo onChange e re-derivar partiria valores intermédios como "1.".
+  useEffect(() => {
+    const base = parseFloat(parLevel) || 0
+    if (base <= 0) {
+      setParLevelDisplay('')
+      return
+    }
+    setParLevelDisplay(
+      parUseOrderUnit
+        ? String(+(base / parMinFactor).toFixed(2))
+        : parLevel
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parUseOrderUnit, parMinFactor])
 
   const updateLink = (key: string, partial: Partial<LinkRow>) =>
     setLinks(prev => prev.map(l => l.key === key ? { ...l, ...partial } : l))
@@ -425,7 +474,9 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           )}
         </div>
 
-        {/* Detetado pelo sistema — campos automáticos com edição inline */}
+        {/* Detetado pelo sistema — só aparece quando há algo para detetar.
+            Form vazio fica leve; bloco surge ao escrever ou em edição. */}
+        {(isEdit || name.trim() !== '' || parsedHint !== null) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <p style={{
             fontSize:      10,
@@ -487,7 +538,8 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             </div>
           </AutoFieldRow>
 
-          {/* Unidade base */}
+          {/* Unidade base — escondido quando parser detetou unidade explícita */}
+          {!hideUnitBlock && (
           <AutoFieldRow
             label="Mede em"
             value={unit}
@@ -544,6 +596,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
               })}
             </div>
           </AutoFieldRow>
+          )}
 
           {/* Peso por unidade — só para unit === 'un' */}
           {unit === 'un' && (() => {
@@ -597,52 +650,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             )
           })()}
         </div>
-
-        {/* Par Level */}
-        {(() => {
-          // Fornecedor preferido válido → mostrar equivalência em stock_unit
-          const preferred = links.find(l =>
-            l.is_preferred &&
-            l.order_unit.trim() &&
-            parseFloat(l.conversion_factor) > 0
-          )
-          const factor    = preferred ? parseFloat(preferred.conversion_factor) : 0
-          const parNum    = parseFloat(parLevel)
-          const showEquiv = preferred && !isNaN(parNum) && parNum > 0 && factor > 0
-          const inStock   = showEquiv ? +(parNum / factor).toFixed(2) : 0
-
-          return (
-            <div>
-              <label style={labelStyle}>
-                STOCK MÍNIMO (em {unit})
-              </label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  placeholder="0"
-                  value={parLevel}
-                  onChange={e => { setParLevel(e.target.value); setIsDirty(true) }}
-                  style={{ ...inputStyle, width: '40%' }}
-                />
-                {showEquiv && (
-                  <span style={{
-                    fontSize:   12,
-                    color:      'var(--text-on-primary-subtle)',
-                    fontFamily: 'JetBrains Mono, monospace',
-                    flexShrink: 0,
-                  }}>
-                    ≈ {inStock} {preferred!.order_unit}
-                  </span>
-                )}
-              </div>
-              <p style={{ fontSize: 10, color: 'var(--text-on-primary-subtle)', marginTop: 3 }}>
-                Abaixo deste valor o sistema sugere encomenda
-              </p>
-            </div>
-          )
-        })()}
+        )}
 
         {/* Supplier links */}
         <div>
@@ -880,6 +888,49 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           >
             + Adicionar Fornecedor
           </button>
+        </div>
+
+        {/* Par Level — input na unidade do chef (caixa, frasco, garrafão);
+            par_level continua guardado em base_unit. Fonte de unidade: link
+            preferred → qualquer link válido → seed do parser → base_unit. */}
+        <div>
+          <label style={labelStyle}>
+            STOCK MÍNIMO (em {parMinUnit ?? unit})
+          </label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              placeholder="0"
+              value={parLevelDisplay}
+              onChange={e => {
+                const v = e.target.value
+                setParLevelDisplay(v)
+                const num = parseFloat(v)
+                if (v === '' || isNaN(num) || num < 0) {
+                  setParLevel('')
+                } else {
+                  setParLevel(String(parUseOrderUnit ? num * parMinFactor : num))
+                }
+                setIsDirty(true)
+              }}
+              style={{ ...inputStyle, width: '40%' }}
+            />
+            {parUseOrderUnit && (parseFloat(parLevel) || 0) > 0 && (
+              <span style={{
+                fontSize:   12,
+                color:      'var(--text-on-primary-subtle)',
+                fontFamily: 'JetBrains Mono, monospace',
+                flexShrink: 0,
+              }}>
+                ≈ {formatStockQty(parseFloat(parLevel), unit)}
+              </span>
+            )}
+          </div>
+          <p style={{ fontSize: 10, color: 'var(--text-on-primary-subtle)', marginTop: 3 }}>
+            Abaixo deste valor o sistema sugere encomenda
+          </p>
         </div>
 
         {/* Deactivate */}
