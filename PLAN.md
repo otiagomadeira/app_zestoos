@@ -54,13 +54,22 @@ Fechar loop real: **Contar → Decidir → Encomendar** (sem fricção)
 
 **DONE** = consigo criar/importar 30 produtos em <5min ✓
 
-### Notas para próximo ciclo (não bloqueiam)
-- Bug conhecido: `lower.includes(w)` em `categoryKeywords.ts` produz falsos
-  positivos por substring (ex.: "espargos" → Peixe e Marisco via "pargo").
-  Resolver com word-boundary matching quando reabrir Artigos.
-- Containers de cauda longa não suportados (bola, peça, vácuo, inteiro).
-  Editáveis no preview. Não adicionar sem testar regressões (ex.: "Bola de
-  Berlim").
+### Validação de fecho
+- `npm run test:parser` → **39/39** (peso/volume/multipack/conserva/
+  enlatado/uni/dimensões/label-first/label-after/multipack-equivalente).
+- Lista real/difícil de 55 produtos validada no Bulk Import: 46 prontos,
+  7 duplicados pré-existentes, **0 a resolver**, 2 size variants.
+
+### Backlog técnico — Artigos (não bloqueiam o MVP)
+1. **Espargos → Peixe e Marisco**. `lower.includes(w)` em
+   `src/lib/categoryKeywords.ts` colide com substring "pargo".
+   Resolver com word-boundary `\b` no matching de keywords.
+2. **Word-boundary global no `suggestCategory`**. A mesma classe de
+   bug pode afetar outras keywords curtas (ex.: "atum" em "atum-bom"
+   ou "cha" em "macha"). Auditar quando reabrir.
+3. **Packaging labels longos / cauda longa**: avaliar `bola`, `peça`,
+   `vácuo`, `inteiro`. Adicionar só após enumerar regressões (ex.:
+   "Bola de Berlim", "peça única" no nome legítimo).
 
 ---
 
