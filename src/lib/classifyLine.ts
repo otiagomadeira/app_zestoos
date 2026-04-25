@@ -35,6 +35,11 @@ export type ClassifiedLine = {
    * error         → false (bloqueado de outra forma)
    */
   requires_configuration: boolean
+  /**
+   * Preserva count × perPack (em base_unit) quando o input é multipack ("6x1L").
+   * Existe para UX (hint reconhecível pelo chef); qty já contém o total.
+   */
+  multipack?: { count: number; perPack: number }
 }
 
 export type MissingField = 'base_per_order_unit' | 'order_unit' | 'base_unit_confirmation'
@@ -69,7 +74,14 @@ const VOLUME_RE = /(\d+[.,]?\d*)\s*(litros?|mililitros?|lt[s]?|cl|dl|ml|mL|l)\b/
  * Grupos: (1) número  (2) label de embalagem
  * Apenas activo quando peso/volume NÃO foram detectados primeiro.
  */
-const PACKAGING_RE = /(\d+[.,]?\d*)\s*(cx|caixas?|sacos?|sacola|packs?|pacotes?|vasos?|fardos?|molhos?|maços?|ramos?|garrafas?|garrafão|latas?|frascos?|bisnaga|tabuleiros?|baldes?|bote|emb|embalagens?)\b/i
+const PACKAGING_RE = /(\d+[.,]?\d*)\s*(cx|caixas?|sacos?|sacola|packs?|pacotes?|vasos?|fardos?|molhos?|maços?|ramos?|garrafas?|garrafão|latas?|frascos?|bisnaga|tabuleiros?|baldes?|bote|emb|embalagens?|conservas?|enlatad[oa]s?)\b/i
+
+/**
+ * Multipack: "6x1L", "12x500g", "cx 6x1L", "caixa 12x500g"
+ * Grupos: (1) count  (2) per-pack qty  (3) per-pack unit
+ * Avaliado ANTES de WEIGHT/VOLUME para que o total seja count × per-pack.
+ */
+const MULTIPACK_RE = /(\d+)\s*[x×]\s*(\d+[.,]?\d*)\s*(kg|g|mg|gr|grs|gramas?|litros?|mililitros?|lt[s]?|cl|dl|ml|mL|l)\b/i
 
 /** Número avulso no início da linha (sem unidade reconhecida a seguir) */
 const BARE_NUMBER_RE = /^(\d+[.,]?\d*)\s+\S/
@@ -96,6 +108,10 @@ const PACKAGING_LABELS = new Set([
   'balde', 'baldes',
   'bote',
   'emb', 'embalagem', 'embalagens',
+  // 'conserva' fica como tipo de produto (mantida no nome via CONTAINER_KEEP_IN_NAME);
+  // 'enlatado' canonicaliza para 'lata' em PACKAGING_MAP (articleDraft.ts).
+  'conserva', 'conservas',
+  'enlatado', 'enlatada', 'enlatados', 'enlatadas',
 ])
 
 // ── Utilitário interno ───────────────────────────────────────────────────────
@@ -136,6 +152,50 @@ export function classifyLine(raw: string): ClassifiedLine {
   // ── 1. Ambiguidade → bloquear ──────────────────────────────────────────────
   if (AMBIGUITY_RE.test(line)) {
     return { type: 'error', base_unit: 'g', qty: 0, label: null, normalized: false, requires_configuration: false }
+  }
+
+  // ── 1.5 Multipack (count × per-pack) ──────────────────────────────────────
+  const multipackMatch = line.match(MULTIPACK_RE)
+  if (multipackMatch && multipackMatch.index !== undefined) {
+    const count   = parseFloat(multipackMatch[1])
+    const each    = parseQty(multipackMatch[2])
+    const rawUnit = multipackMatch[3].toLowerCase()
+
+    let baseUnit: 'g' | 'mL'
+    let perPack:  number
+
+    if (rawUnit === 'kg') {
+      baseUnit = 'g'
+      perPack  = each * 1000
+    } else if (['g', 'mg', 'gr', 'grs', 'gramas', 'grama'].includes(rawUnit)) {
+      baseUnit = 'g'
+      perPack  = each
+    } else if (['l', 'lt', 'lts', 'litro', 'litros'].includes(rawUnit)) {
+      baseUnit = 'mL'
+      perPack  = each * 1000
+    } else if (rawUnit === 'cl') {
+      baseUnit = 'mL'
+      perPack  = each * 10
+    } else if (rawUnit === 'dl') {
+      baseUnit = 'mL'
+      perPack  = each * 100
+    } else {
+      baseUnit = 'mL'
+      perPack  = each   // ml | mililitros
+    }
+
+    const total = count * perPack
+    const label = findAdjacentPackagingLabel(line, multipackMatch.index)
+
+    return {
+      type: baseUnit === 'g' ? 'weight' : 'volume',
+      base_unit: baseUnit,
+      qty: total,
+      label,
+      normalized: true,
+      requires_configuration: false,
+      multipack: { count, perPack },
+    }
   }
 
   // ── 2. Peso ────────────────────────────────────────────────────────────────

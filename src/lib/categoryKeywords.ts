@@ -34,6 +34,20 @@ const CONTAINER_WORDS = [
   'bisnaga',
 ]
 
+// ── Override de Mercearia para palavras dominantes ───────────────────────────
+// Allowlist mínima validada caso a caso. NÃO transformar em "first-word global"
+// sem antes enumerar regressões — keywords como 'pimenta'/'galinha' têm
+// significado válido noutras categorias (Hortelã Pimenta → F&L, Galinha → Carnes).
+//
+// Resolve:
+//   "Mel Rosmaninho"          (rosmaninho está em F&L, mas mel domina)
+//   "Caldo Galinha em Pó"     (galinha está em Carnes, mas caldo domina)
+//   "Chocolate Negro Callets" ('choco' substring colide com Peixe e Marisco)
+//
+// Uso de \b para evitar falsos positivos: "Camembert"/"Caramelo"/"Vermelho"
+// contêm "mel" como substring mas \bmel\b não casa por estar dentro de palavra.
+const STRONG_MERCEARIA_RE = /\b(mel|caldo|chocolate|callets)\b/i
+
 // ── Ingrediente base ──────────────────────────────────────────────────────────
 
 const INGREDIENT_KEYWORDS: Array<{ words: string[]; category: string }> = [
@@ -261,6 +275,11 @@ export function suggestCategory(ctx: {
   const lowerLabel = (label ?? '').toLowerCase()
   if (CONTAINER_WORDS.some(w => lowerRaw.includes(w) || lowerLabel === w)) {
     return { category: 'Mercearia', confident: true, reason: 'container-format' }
+  }
+
+  // 3.5 Strong-Mercearia override (allowlist) — domina sobre o loop seguinte.
+  if (STRONG_MERCEARIA_RE.test(lower) || STRONG_MERCEARIA_RE.test(lowerRaw)) {
+    return { category: 'Mercearia', confident: true, reason: 'strong-mercearia' }
   }
 
   // 4. Keywords de ingrediente (todos os grupos excepto Bebidas, já verificado)

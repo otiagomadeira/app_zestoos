@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:parser": "tsx scripts/test-parser.ts",
     "prepare": "husky"
   },
   "dependencies": {

@@ -1,0 +1,157 @@
+/**
+ * Validação leve do motor de parsing de artigos.
+ *
+ * Cobre:
+ *   - 12 casos críticos (definidos por produto após 50 produtos difíceis)
+ *   - 6 regressões próximas pedidas pelo chef
+ *   - 3 regressões defensivas (Mel frasco, Hortelã pimenta, Camembert)
+ *
+ * Sem framework. Sem dependências extra. Usa tsx (já em devDependencies).
+ *
+ * Correr: npm run test:parser
+ * Sai com código 1 se algum caso falhar.
+ */
+
+import { buildArticleDraft, formatDraftHint } from '../src/lib/articleDraft'
+
+type Expect = {
+  name?:             string
+  unit?:             'g' | 'mL' | 'un'
+  category?:         string | null
+  orderUnit?:        string | null
+  conversionFactor?: number | null
+  detectedQty?:      number | null
+  multipackCount?:   number | null
+  multipackPerPack?: number | null
+  hint?:             string | null
+}
+
+type Case = {
+  tag:    'CRITICAL' | 'REGRESSION'
+  input:  string
+  expect: Expect
+}
+
+const CASES: Case[] = [
+  // ── 12 casos críticos ──────────────────────────────────────────────
+  { tag: 'CRITICAL', input: 'Ovo caixa 180 uni',
+    expect: { name: 'Ovo', unit: 'un', orderUnit: 'caixa', conversionFactor: 180 } },
+  { tag: 'CRITICAL', input: 'Ovos classe M caixa 180 uni',
+    expect: { name: 'Ovos Classe M', unit: 'un', orderUnit: 'caixa', conversionFactor: 180 } },
+  { tag: 'CRITICAL', input: 'Limão caixa 60 uni',
+    expect: { name: 'Limão', unit: 'un', orderUnit: 'caixa', conversionFactor: 60 } },
+  { tag: 'CRITICAL', input: 'Alface iceberg caixa 12 uni',
+    expect: { name: 'Alface Iceberg', unit: 'un', orderUnit: 'caixa', conversionFactor: 12 } },
+  { tag: 'CRITICAL', input: 'Manjericão vaso 1 uni',
+    expect: { name: 'Manjericão', unit: 'un', orderUnit: 'vaso', conversionFactor: 1 } },
+  { tag: 'CRITICAL', input: 'Leite sem lactose cx 6x1L',
+    expect: { name: 'Leite Sem Lactose', unit: 'mL', orderUnit: 'caixa', conversionFactor: 6000,
+              multipackCount: 6, multipackPerPack: 1000, hint: '6 x 1 L · caixa' } },
+  { tag: 'CRITICAL', input: 'Atum em lata 1kg',
+    expect: { name: 'Atum em Lata', unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 1000 } },
+  { tag: 'CRITICAL', input: 'Feijão em lata 2.5kg',
+    expect: { name: 'Feijão em Lata', unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 2500 } },
+  { tag: 'CRITICAL', input: 'Feijão seco saco 5kg',
+    expect: { name: 'Feijão Seco', unit: 'g', orderUnit: 'saco', conversionFactor: 5000 } },
+  { tag: 'CRITICAL', input: 'Caldo galinha em pó balde 1kg',
+    expect: { name: 'Caldo Galinha em Pó', unit: 'g', category: 'Mercearia', orderUnit: 'balde', conversionFactor: 1000 } },
+  { tag: 'CRITICAL', input: 'Mel rosmaninho balde 5kg',
+    expect: { name: 'Mel Rosmaninho', category: 'Mercearia', orderUnit: 'balde', conversionFactor: 5000 } },
+  { tag: 'CRITICAL', input: 'Chocolate negro callets saco 2.5kg',
+    expect: { name: 'Chocolate Negro Callets', category: 'Mercearia', orderUnit: 'saco', conversionFactor: 2500 } },
+
+  // ── Regressões próximas ────────────────────────────────────────────
+  { tag: 'REGRESSION', input: 'Rúcula saco 200g',
+    expect: { name: 'Rúcula', unit: 'g', orderUnit: 'saco', conversionFactor: 200 } },
+  { tag: 'REGRESSION', input: 'Tomate pelado lata 2.5kg',
+    expect: { unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 2500 } },
+  { tag: 'REGRESSION', input: 'Choco limpo 1kg',
+    expect: { name: 'Choco Limpo', unit: 'g', category: 'Peixe e Marisco' } },
+  { tag: 'REGRESSION', input: 'Chocolate em pó saco 1kg',
+    expect: { name: 'Chocolate em Pó', unit: 'g', category: 'Mercearia', orderUnit: 'saco', conversionFactor: 1000 } },
+  { tag: 'REGRESSION', input: 'Água cx 12x1.5L',
+    expect: { name: 'Água', unit: 'mL', category: 'Bebidas', orderUnit: 'caixa', conversionFactor: 18000,
+              multipackCount: 12, multipackPerPack: 1500, hint: '12 x 1.5 L · caixa' } },
+  { tag: 'REGRESSION', input: 'Natas cx 12x200ml',
+    expect: { name: 'Natas', unit: 'mL', category: 'Lacticínios e Ovos', orderUnit: 'caixa', conversionFactor: 2400,
+              multipackCount: 12, multipackPerPack: 200, hint: '12 x 200 mL · caixa' } },
+  { tag: 'REGRESSION', input: 'Cerveja cx 24x33cl',
+    expect: { name: 'Cerveja', unit: 'mL', category: 'Bebidas', orderUnit: 'caixa', conversionFactor: 7920,
+              multipackCount: 24, multipackPerPack: 330, hint: '24 x 330 mL · caixa' } },
+
+  // ── Conserva / enlatado: bug do supplierSeed silenciosamente perdido ───
+  { tag: 'CRITICAL', input: 'Atum conserva 1kg',
+    expect: { name: 'Atum Conserva', unit: 'g', category: 'Mercearia', orderUnit: 'conserva', conversionFactor: 1000 } },
+  { tag: 'CRITICAL', input: 'Atum enlatado 1kg',
+    expect: { name: 'Atum Enlatado', unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 1000 } },
+  { tag: 'CRITICAL', input: 'Pimentos em conserva frasco 1kg',
+    expect: { name: 'Pimentos em Conserva', unit: 'g', category: 'Mercearia', orderUnit: 'frasco', conversionFactor: 1000 } },
+
+  // ── Defensivas (não-regressão de cobertura existente) ──────────────
+  { tag: 'REGRESSION', input: 'Mel frasco 1kg',
+    expect: { name: 'Mel', category: 'Mercearia', orderUnit: 'frasco', conversionFactor: 1000 } },
+  { tag: 'REGRESSION', input: 'Hortelã pimenta',
+    expect: { category: 'Frutas e Legumes' } },
+  { tag: 'REGRESSION', input: 'Camembert',
+    expect: { category: 'Lacticínios e Ovos' } },
+]
+
+let pass = 0
+let fail = 0
+const failures: string[] = []
+
+for (const c of CASES) {
+  const d    = buildArticleDraft(c.input)
+  const errs: string[] = []
+
+  if (c.expect.name !== undefined && d.name !== c.expect.name) {
+    errs.push(`name: esperado "${c.expect.name}" obteve "${d.name}"`)
+  }
+  if (c.expect.unit !== undefined && d.unit !== c.expect.unit) {
+    errs.push(`unit: esperado "${c.expect.unit}" obteve "${d.unit}"`)
+  }
+  if (c.expect.category !== undefined && d.category !== c.expect.category) {
+    errs.push(`category: esperado "${c.expect.category}" obteve "${d.category}"`)
+  }
+  if (c.expect.orderUnit !== undefined) {
+    const got = d.supplierSeed?.order_unit ?? null
+    if (got !== c.expect.orderUnit) errs.push(`orderUnit: esperado "${c.expect.orderUnit}" obteve "${got}"`)
+  }
+  if (c.expect.conversionFactor !== undefined) {
+    const got = d.supplierSeed?.conversion_factor ?? null
+    if (got !== c.expect.conversionFactor) errs.push(`conversionFactor: esperado ${c.expect.conversionFactor} obteve ${got}`)
+  }
+  if (c.expect.detectedQty !== undefined) {
+    const got = d.detected_qty ?? null
+    if (got !== c.expect.detectedQty) errs.push(`detected_qty: esperado ${c.expect.detectedQty} obteve ${got}`)
+  }
+  if (c.expect.multipackCount !== undefined) {
+    const got = d.detected_multipack?.count ?? null
+    if (got !== c.expect.multipackCount) errs.push(`multipackCount: esperado ${c.expect.multipackCount} obteve ${got}`)
+  }
+  if (c.expect.multipackPerPack !== undefined) {
+    const got = d.detected_multipack?.perPack ?? null
+    if (got !== c.expect.multipackPerPack) errs.push(`multipackPerPack: esperado ${c.expect.multipackPerPack} obteve ${got}`)
+  }
+  if (c.expect.hint !== undefined) {
+    const got = formatDraftHint(d)
+    if (got !== c.expect.hint) errs.push(`hint: esperado "${c.expect.hint}" obteve "${got}"`)
+  }
+
+  if (errs.length === 0) {
+    pass++
+    console.log(`  ✓  [${c.tag}] ${c.input}`)
+  } else {
+    fail++
+    console.log(`  ✗  [${c.tag}] ${c.input}`)
+    for (const e of errs) console.log(`        ${e}`)
+    failures.push(c.input)
+  }
+}
+
+console.log(`\n${pass}/${pass + fail} passaram`)
+if (fail > 0) {
+  console.log('\nFalharam:')
+  for (const f of failures) console.log(`  - ${f}`)
+  process.exit(1)
+}

@@ -47,6 +47,12 @@ export type ArticleDraft = {
   detected_qty?:     number
   /** Label de embalagem detetada (auxiliar — para hint UX) */
   detected_label?:   string
+  /**
+   * Multipack detetado ("6x1L"): preserva count × perPack para UX.
+   * Apenas afeta o hint visual; conversion_factor permanece = count × perPack
+   * em base_unit. Não usado para cálculos de stock/encomenda.
+   */
+  detected_multipack?: { count: number; perPack: number }
 }
 
 // ── Constantes internas ───────────────────────────────────────────────────────
@@ -69,6 +75,10 @@ const PACKAGING_MAP: Record<string, string> = {
   balde: 'balde', baldes: 'balde',
   bote: 'bote',
   emb: 'embalagem', embalagem: 'embalagem', embalagens: 'embalagem',
+  // 'enlatado' (em todas as flexões) é forma de descrever "lata" — canonicalizar.
+  enlatado: 'lata', enlatada: 'lata', enlatados: 'lata', enlatadas: 'lata',
+  // 'conserva' fica como label próprio: tipo de produto distinto, sem assumir 'lata'.
+  conserva: 'conserva', conservas: 'conserva',
 }
 
 const CONNECTORS = new Set(['de', 'da', 'do', 'dos', 'das'])
@@ -111,11 +121,13 @@ export function buildArticleDraft(
 
   // ── Construir supplierSeed ─────────────────────────────────────────────────
   let supplierSeed: SupplierSeed | undefined
-  let detectedQty:   number | undefined
-  let detectedLabel: string | undefined
+  let detectedQty:       number | undefined
+  let detectedLabel:     string | undefined
+  let detectedMultipack: { count: number; perPack: number } | undefined
 
   if (cl.type === 'weight' || cl.type === 'volume') {
-    detectedQty   = cl.qty
+    detectedQty       = cl.qty
+    detectedMultipack = cl.multipack
     if (cl.label) {
       const canonical = PACKAGING_MAP[cl.label] ?? cl.label
       detectedLabel = canonical
@@ -148,41 +160,49 @@ export function buildArticleDraft(
   }
 
   return {
-    rawInput:          raw,
-    name:              normalized.name,
+    rawInput:           raw,
+    name:               normalized.name,
     originalName,
-    normalizedKey:     normalized.normalizedKey,
-    unit:              normalized.unit,
-    category:          normalized.category,
-    categoryConfident: normalized.categoryConfident,
-    categoryReason:    normalized.categoryReason,
+    normalizedKey:      normalized.normalizedKey,
+    unit:               normalized.unit,
+    category:           normalized.category,
+    categoryConfident:  normalized.categoryConfident,
+    categoryReason:     normalized.categoryReason,
     supplierSeed,
-    warnings:          normalized.warnings,
-    detected_qty:      detectedQty,
-    detected_label:    detectedLabel,
+    warnings:           normalized.warnings,
+    detected_qty:       detectedQty,
+    detected_label:     detectedLabel,
+    detected_multipack: detectedMultipack,
   }
 }
 
 /**
  * Formata as informações detetadas como hint legível.
  * Converte unidades base para display (1000g → "1 kg", 750mL → "750 mL").
+ * Para multipack ("6x1L"), preserva o formato "6 x 1 L" reconhecível pelo chef
+ * em vez de simplificar para o total ("6 L").
  * Devolve null se nada foi extraído.
  */
 export function formatDraftHint(draft: ArticleDraft): string | null {
   const parts: string[] = []
-  if (draft.detected_qty != null && draft.detected_qty > 0) {
-    if (draft.unit === 'g') {
-      parts.push(draft.detected_qty >= 1000
-        ? `${+(draft.detected_qty / 1000).toFixed(2)} kg`
-        : `${draft.detected_qty} g`)
-    } else if (draft.unit === 'mL') {
-      parts.push(draft.detected_qty >= 1000
-        ? `${+(draft.detected_qty / 1000).toFixed(2)} L`
-        : `${draft.detected_qty} mL`)
-    } else {
-      parts.push(String(draft.detected_qty))
-    }
+
+  if (draft.detected_multipack) {
+    const { count, perPack } = draft.detected_multipack
+    parts.push(`${count} x ${formatBaseQty(perPack, draft.unit)}`)
+  } else if (draft.detected_qty != null && draft.detected_qty > 0) {
+    parts.push(formatBaseQty(draft.detected_qty, draft.unit))
   }
+
   if (draft.detected_label) parts.push(draft.detected_label)
   return parts.length ? parts.join(' · ') : null
+}
+
+function formatBaseQty(qty: number, unit: 'g' | 'mL' | 'un'): string {
+  if (unit === 'g') {
+    return qty >= 1000 ? `${+(qty / 1000).toFixed(2)} kg` : `${qty} g`
+  }
+  if (unit === 'mL') {
+    return qty >= 1000 ? `${+(qty / 1000).toFixed(2)} L` : `${qty} mL`
+  }
+  return String(qty)
 }
