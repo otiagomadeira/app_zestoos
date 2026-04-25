@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Article } from '@/types/database'
 import { createArticle } from '@/lib/supabase'
-import { KITCHEN_UNITS } from '@/lib/units'
+import { KITCHEN_UNITS, formatUnit } from '@/lib/units'
 import { parseProductLines, recomputeDuplicates, type ParsedLine } from '@/lib/parseProductLines'
 import { suggestCategory } from '@/lib/categoryKeywords'
 import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
@@ -32,6 +32,28 @@ const inputStyle: React.CSSProperties = {
   fontSize: 13,
   outline: 'none',
   boxSizing: 'border-box',
+}
+
+// ── Hint de embalagem detetada (read-only) ────────────────────────────────────
+// Mostra `order_unit · qty formatted` quando o parser detetou supplierSeed.
+
+function SeedHint({ line }: { line: ParsedLine }) {
+  if (!line.stock_unit) return null
+  const qty    = parseFloat(line.base_per_order)
+  const hasQty = !isNaN(qty) && qty > 0 && line.unit.trim() !== ''
+  return (
+    <p style={{
+      fontSize:      11,
+      color:         'var(--text-on-primary-faint)',
+      fontFamily:    'JetBrains Mono, monospace',
+      letterSpacing: '0.02em',
+      margin:        0,
+    }}>
+      {hasQty
+        ? `${line.stock_unit} · ${formatUnit(qty, line.unit)}`
+        : line.stock_unit}
+    </p>
+  )
 }
 
 // ── Linha da tabela de preview ────────────────────────────────────────────────
@@ -113,6 +135,9 @@ function LineRow({ line, onChange, onDelete, onApplySuggestion: _onApplySuggesti
           )}
         </div>
       </div>
+
+      {/* Hint do parser — embalagem detetada */}
+      <SeedHint line={line} />
 
       {/* Fila 2: Categoria + Eliminar */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6, alignItems: 'end' }}>
@@ -215,13 +240,14 @@ function DuplicateCard({
 }: { line: ParsedLine; onForceCreate: (id: string) => void; onDelete: (id: string) => void }) {
   return (
     <div style={{ background: 'var(--border-on-primary-soft)', border: `1px solid var(--border-on-primary-soft)`, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-      <div>
+      <div style={{ minWidth: 0 }}>
         <span style={{ fontSize: 13, color: 'var(--text-on-primary-faint)', textDecoration: 'line-through' }}>
           {line.name}
         </span>
         <span style={{ fontSize: 11, color: 'var(--text-on-primary-faint)', marginLeft: 8 }}>
           {line.isDuplicateInBatch && !line.isDuplicate ? 'repetido na lista' : 'já existe'}
         </span>
+        <SeedHint line={line} />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         <button
