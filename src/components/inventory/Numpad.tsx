@@ -7,6 +7,8 @@ export type NumpadProps = {
   currentQty:  number
   unit:        string
   value:       string
+  /** true durante save em curso — desativa OK e mostra "…" */
+  saving?:     boolean
   onDigit:     (d: string) => void
   onDecimal:   () => void
   onBackspace: () => void
@@ -44,6 +46,7 @@ export default function Numpad({
   currentQty,
   unit,
   value,
+  saving = false,
   onDigit,
   onDecimal,
   onBackspace,
@@ -268,25 +271,27 @@ export default function Numpad({
         {/* OK */}
         <button
           type="button"
-          onPointerDown={press(onOk)}
+          onPointerDown={saving ? (e) => e.preventDefault() : press(onOk)}
+          disabled={saving}
           aria-label="Confirmar contagem"
+          aria-busy={saving}
           style={{
             width:          '100%',
             minHeight:      64,
             borderRadius:   14,
             border:         'none',
-            background:     'var(--action)',
+            background:     saving ? 'var(--action-disabled)' : 'var(--action)',
             color:          'var(--white)',
             fontSize:       20,
             fontWeight:     700,
             letterSpacing:  '0.02em',
-            cursor:         'pointer',
+            cursor:         saving ? 'wait' : 'pointer',
             display:        'flex',
             alignItems:     'center',
             justifyContent: 'center',
           }}
         >
-          OK
+          {saving ? '…' : 'OK'}
         </button>
       </div>
     </>

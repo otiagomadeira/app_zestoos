@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import type { CurrentStock } from '@/types/database'
 import { fetchCurrentStock, saveStockCount } from '@/lib/supabase'
 import ArticleCard from './ArticleCard'
@@ -13,6 +13,10 @@ export default function InventoryScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [numpadValue, setNumpadValue] = useState<string>('')
   const [savingId,   setSavingId]   = useState<string | null>(null)
+  // Guard síncrono contra double-tap em OK: setState é assíncrono, useRef
+  // evita janela em que dois cliques sucessivos disparem dois saveStockCount
+  // antes de savingId atualizar.
+  const submitInFlight = useRef(false)
   const [countedThisSession, setCountedThisSession] = useState<Set<string>>(new Set())
   const [search,      setSearch]      = useState('')
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
@@ -103,6 +107,8 @@ export default function InventoryScreen() {
   }, [sortedFiltered, countedThisSession])
 
   const handleConfirm = useCallback(async () => {
+    // Guard síncrono: rejeita re-entry imediato (double-tap).
+    if (submitInFlight.current) return
     if (!selectedArticle || !numpadValue) return
     const newQtyStock = parseFloat(numpadValue)
     if (isNaN(newQtyStock) || newQtyStock < 0) return
@@ -112,6 +118,7 @@ export default function InventoryScreen() {
     const newQtyBase = newQtyStock * selectedArticle.base_per_stock
     const articleId  = selectedArticle.article_id
 
+    submitInFlight.current = true
     setSavingId(articleId)
     try {
       const result = await saveStockCount(articleId, newQtyBase, selectedArticle.unit, selectedArticle.current_qty)
@@ -134,6 +141,7 @@ export default function InventoryScreen() {
       setError((e as Error).message ?? 'Erro ao guardar')
     } finally {
       setSavingId(null)
+      submitInFlight.current = false
     }
   }, [selectedArticle, numpadValue, advanceToNext])
 
@@ -272,6 +280,7 @@ export default function InventoryScreen() {
           currentQty={selectedArticle.current_qty / (selectedArticle.base_per_stock || 1)}
           unit={selectedArticle.stock_unit}
           value={numpadValue}
+          saving={savingId === selectedArticle.article_id}
           onDigit={handleDigit}
           onDecimal={handleDecimal}
           onBackspace={handleBackspace}
