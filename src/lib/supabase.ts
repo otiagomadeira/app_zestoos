@@ -1,3 +1,5 @@
+'use client'
+
 import { createClient } from '@/lib/supabase/client'
 import { getCache, setCache, invalidateCache } from '@/lib/cache'
 import type {
