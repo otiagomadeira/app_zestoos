@@ -411,7 +411,6 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
         if (unit !== 'g' && unit !== 'mL' && unit !== 'un') {
           throw new Error(`Unidade inválida em "${savedName}": ${unit || '(vazio)'} — esperado g, mL ou un.`)
         }
-        maybeLearnAlias(line.originalName, savedName, aliases, learnAlias, line.wasManuallyEdited)
         const article = await createArticle({
           name:      savedName,
           unit,
@@ -431,6 +430,13 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
             console.error('createArticleSize falhou:', { articleId: article.id, label: stockUnit, error: e })
           }
         }
+
+        // Aprender alias só depois de createArticle ter sucesso. Se o save
+        // falha (RLS, duplicado, network), o catch do Promise.allSettled
+        // recebe o reject e nada chega aqui — invariant: nunca aprender
+        // para um artigo que não foi persistido.
+        maybeLearnAlias(line.originalName, savedName, aliases, learnAlias, line.wasManuallyEdited)
+
         return article
       })
     )
