@@ -11,6 +11,8 @@ export type ParsedLine = {
   unit: string              // base_unit (g, mL, un…)
   stock_unit: string        // unidade de stock (saco, molho…); '' = igual a unit
   base_per_order: string    // base_units por order_unit (para fornecedor); '' = não configurado
+  /** Multipack detetado ("6x1L"): preserva count × perPack para hint UX. */
+  detected_multipack?: { count: number; perPack: number }
   par_level: string
   category: string
   suggestedCategory: string | null
@@ -69,6 +71,7 @@ export function parseProductLines(
       unit:                draft.unit,
       stock_unit,
       base_per_order,
+      detected_multipack:  draft.detected_multipack,
       par_level:           '0',
       category:            draft.category ?? '',
       suggestedCategory:   draft.category,

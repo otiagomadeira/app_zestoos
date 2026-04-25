@@ -247,6 +247,13 @@ export type CategoryResult = {
   reason?: string
 }
 
+// Comparação accent-insensitive: a lista de keywords mantém-se com acentos
+// (display intacto), mas o matching ignora diacríticos para apanhar inputs do
+// chef sem acento ("feijao seco" → "feijão", "brocolos" → "brócolos").
+function stripDiacritics(s: string): string {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '')
+}
+
 // ── suggestCategory ───────────────────────────────────────────────────────────
 
 export function suggestCategory(ctx: {
@@ -256,28 +263,36 @@ export function suggestCategory(ctx: {
   raw?: string
 }): CategoryResult {
   const { name, unit, label, raw } = ctx
-  const lower    = name.toLowerCase()
-  const lowerRaw = (raw ?? name).toLowerCase()
+  const lower    = stripDiacritics(name.toLowerCase())
+  const lowerRaw = stripDiacritics((raw ?? name).toLowerCase())
 
   // 1. Formato congelado (incondicional)
-  if (FROZEN_WORDS.some(w => lowerRaw.includes(w) || lower.includes(w))) {
+  if (FROZEN_WORDS.some(w => {
+    const wn = stripDiacritics(w)
+    return lowerRaw.includes(wn) || lower.includes(wn)
+  })) {
     return { category: 'Congelados', confident: true, reason: 'frozen-format' }
   }
 
   // 2. Bebidas por keyword de ingrediente (antes de container words para não
   //    reclassificar "Cerveja em lata" como Mercearia)
   const bebidasGroup = INGREDIENT_KEYWORDS.find(g => g.category === 'Bebidas')!
-  if (bebidasGroup.words.some(w => lower.includes(w))) {
+  if (bebidasGroup.words.some(w => lower.includes(stripDiacritics(w)))) {
     return { category: 'Bebidas', confident: true, reason: 'ingredient-keyword' }
   }
 
   // 3. Container words → Mercearia (lata, conserva, pelado, frasco…)
-  const lowerLabel = (label ?? '').toLowerCase()
-  if (CONTAINER_WORDS.some(w => lowerRaw.includes(w) || lowerLabel === w)) {
+  const lowerLabel = stripDiacritics((label ?? '').toLowerCase())
+  if (CONTAINER_WORDS.some(w => {
+    const wn = stripDiacritics(w)
+    return lowerRaw.includes(wn) || lowerLabel === wn
+  })) {
     return { category: 'Mercearia', confident: true, reason: 'container-format' }
   }
 
   // 3.5 Strong-Mercearia override (allowlist) — domina sobre o loop seguinte.
+  // STRONG_MERCEARIA_RE só contém palavras sem acentos, mas testamos contra
+  // input já normalizado por consistência.
   if (STRONG_MERCEARIA_RE.test(lower) || STRONG_MERCEARIA_RE.test(lowerRaw)) {
     return { category: 'Mercearia', confident: true, reason: 'strong-mercearia' }
   }
@@ -285,7 +300,7 @@ export function suggestCategory(ctx: {
   // 4. Keywords de ingrediente (todos os grupos excepto Bebidas, já verificado)
   for (const group of INGREDIENT_KEYWORDS) {
     if (group.category === 'Bebidas') continue
-    if (group.words.some(w => lower.includes(w))) {
+    if (group.words.some(w => lower.includes(stripDiacritics(w)))) {
       return { category: group.category, confident: true, reason: 'ingredient-keyword' }
     }
   }

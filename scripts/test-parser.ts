@@ -13,6 +13,7 @@
  */
 
 import { buildArticleDraft, formatDraftHint } from '../src/lib/articleDraft'
+import { parseProductLines } from '../src/lib/parseProductLines'
 
 type Expect = {
   name?:             string
@@ -94,6 +95,16 @@ const CASES: Case[] = [
     expect: { category: 'Frutas e Legumes' } },
   { tag: 'REGRESSION', input: 'Camembert',
     expect: { category: 'Lacticínios e Ovos' } },
+
+  // ── Categoria accent-insensitive: input do chef sem acentos ────────
+  { tag: 'REGRESSION', input: 'feijao seco saco 5kg',
+    expect: { category: 'Mercearia', orderUnit: 'saco', conversionFactor: 5000 } },
+  { tag: 'REGRESSION', input: 'limao caixa 60 uni',
+    expect: { unit: 'un', category: 'Frutas e Legumes', orderUnit: 'caixa', conversionFactor: 60 } },
+  { tag: 'REGRESSION', input: 'brocolos 1kg',
+    expect: { category: 'Frutas e Legumes' } },
+  { tag: 'REGRESSION', input: 'acucar saco 1kg',
+    expect: { category: 'Mercearia', orderUnit: 'saco', conversionFactor: 1000 } },
 ]
 
 let pass = 0
@@ -144,6 +155,43 @@ for (const c of CASES) {
   } else {
     fail++
     console.log(`  ✗  [${c.tag}] ${c.input}`)
+    for (const e of errs) console.log(`        ${e}`)
+    failures.push(c.input)
+  }
+}
+
+// ── parseProductLines: propagação de detected_multipack à ParsedLine ──────────
+//
+// O hint visual no Bulk Import (`SeedHint`) lê line.detected_multipack do
+// ParsedLine, não do ArticleDraft. Sem esta propagação, "leite cx 6x1L" cai
+// para o formato simplificado "caixa · 6 L" em vez de "caixa · 6 x 1 L".
+
+console.log('\n── parseProductLines (multipack propagation) ──')
+const PL_CASES: Array<{ input: string; count: number; perPack: number }> = [
+  { input: 'leite sem lactose cx 6x1L', count: 6,  perPack: 1000 },
+  { input: 'natas cx 12x200ml',          count: 12, perPack: 200  },
+  { input: 'cerveja cx 24x33cl',         count: 24, perPack: 330  },
+]
+
+for (const c of PL_CASES) {
+  const lines = parseProductLines(c.input, [])
+  const errs: string[] = []
+  if (lines.length !== 1) {
+    errs.push(`esperado 1 linha, obteve ${lines.length}`)
+  } else {
+    const mp = lines[0].detected_multipack
+    if (!mp) errs.push('detected_multipack ausente em ParsedLine')
+    else {
+      if (mp.count   !== c.count)   errs.push(`count: esperado ${c.count} obteve ${mp.count}`)
+      if (mp.perPack !== c.perPack) errs.push(`perPack: esperado ${c.perPack} obteve ${mp.perPack}`)
+    }
+  }
+  if (errs.length === 0) {
+    pass++
+    console.log(`  ✓  [PARSED-LINE] ${c.input}`)
+  } else {
+    fail++
+    console.log(`  ✗  [PARSED-LINE] ${c.input}`)
     for (const e of errs) console.log(`        ${e}`)
     failures.push(c.input)
   }

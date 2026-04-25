@@ -36,11 +36,23 @@ const inputStyle: React.CSSProperties = {
 
 // ── Hint de embalagem detetada (read-only) ────────────────────────────────────
 // Mostra `order_unit · qty formatted` quando o parser detetou supplierSeed.
+// Multipack ("6x1L") preserva o formato reconhecível pelo chef ("6 x 1 L").
 
 function SeedHint({ line }: { line: ParsedLine }) {
   if (!line.stock_unit) return null
   const qty    = parseFloat(line.base_per_order)
   const hasQty = !isNaN(qty) && qty > 0 && line.unit.trim() !== ''
+  const mp     = line.detected_multipack
+
+  let body: string
+  if (mp) {
+    body = `${line.stock_unit} · ${mp.count} x ${formatUnit(mp.perPack, line.unit)}`
+  } else if (hasQty) {
+    body = `${line.stock_unit} · ${formatUnit(qty, line.unit)}`
+  } else {
+    body = line.stock_unit
+  }
+
   return (
     <p style={{
       fontSize:      11,
@@ -49,9 +61,7 @@ function SeedHint({ line }: { line: ParsedLine }) {
       letterSpacing: '0.02em',
       margin:        0,
     }}>
-      {hasQty
-        ? `${line.stock_unit} · ${formatUnit(qty, line.unit)}`
-        : line.stock_unit}
+      {body}
     </p>
   )
 }
