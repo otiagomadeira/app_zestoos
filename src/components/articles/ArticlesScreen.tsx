@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { Article } from '@/types/database'
 import { fetchAllArticles } from '@/lib/supabase'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -23,6 +23,26 @@ export default function ArticlesScreen() {
   const [showInactive, setShowInactive] = useState(false)
   const [mode,         setMode]         = useState<Mode>('idle')
   const [selected,     setSelected]     = useState<Article | null>(null)
+  const [addMenuOpen,  setAddMenuOpen]  = useState(false)
+  const addMenuRef                       = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!addMenuOpen) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) {
+        setAddMenuOpen(false)
+      }
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setAddMenuOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [addMenuOpen])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -106,7 +126,7 @@ export default function ArticlesScreen() {
               {articles.filter(a => a.is_active).length} ativos
             </p>
           </div>
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div ref={addMenuRef} style={{ display: 'flex', gap: 6, position: 'relative' }}>
             <button
               onClick={() => setMode('aliases')}
               title="Aliases aprendidos"
@@ -115,17 +135,66 @@ export default function ArticlesScreen() {
               ⌘
             </button>
             <button
-              onClick={() => setMode('bulk-import')}
-              style={{ height: 44, padding: '0 12px', borderRadius: 8, border: `1px solid var(--action-border)`, background: 'transparent', color: 'var(--action)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+              onClick={() => setAddMenuOpen(o => !o)}
+              aria-haspopup="menu"
+              aria-expanded={addMenuOpen}
+              style={{ height: 44, padding: '0 14px', borderRadius: 8, border: 'none', background: 'var(--action)', color: 'var(--text-on-primary)', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
             >
-              + Importar
+              + Adicionar
+              <span style={{ fontSize: 10, opacity: 0.7 }}>▾</span>
             </button>
-            <button
-              onClick={() => { setSelected(null); setMode('create') }}
-              style={{ height: 44, padding: '0 14px', borderRadius: 8, border: 'none', background: 'var(--action)', color: 'var(--text-on-primary)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
-            >
-              + Novo
-            </button>
+
+            {addMenuOpen && (
+              <div
+                role="menu"
+                style={{
+                  position:     'absolute',
+                  top:          'calc(100% + 6px)',
+                  right:        0,
+                  zIndex:       50,
+                  minWidth:     240,
+                  maxWidth:     'calc(100vw - 32px)',
+                  background:   'var(--surface)',
+                  border:       '1px solid var(--border)',
+                  borderRadius: 10,
+                  boxShadow:    '0 8px 24px rgba(28, 20, 10, 0.12)',
+                  padding:      4,
+                  display:      'flex',
+                  flexDirection:'column',
+                  gap:          2,
+                  animation:    'addMenuIn 0.15s ease-out',
+                }}
+              >
+                <button
+                  role="menuitem"
+                  onClick={() => { setSelected(null); setMode('create'); setAddMenuOpen(false) }}
+                  style={{ height: 44, padding: '0 12px', textAlign: 'left', borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--text)', fontSize: 14, cursor: 'pointer' }}
+                >
+                  Escrever artigo
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => { setMode('bulk-import'); setAddMenuOpen(false) }}
+                  style={{ height: 44, padding: '0 12px', textAlign: 'left', borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--text)', fontSize: 14, cursor: 'pointer' }}
+                >
+                  Colar lista
+                </button>
+                <div style={{ height: 1, background: 'var(--border)', margin: '4px 8px' }} />
+                {(['Importar PDF', 'Importar Excel', 'Tirar foto'] as const).map(label => (
+                  <div
+                    key={label}
+                    role="menuitem"
+                    aria-disabled
+                    style={{ height: 44, padding: '0 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: 6, color: 'var(--text-subtle)', fontSize: 14, cursor: 'not-allowed', opacity: 0.6 }}
+                  >
+                    <span>{label}</span>
+                    <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--text-subtle)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px' }}>
+                      EM BREVE
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
         <input
