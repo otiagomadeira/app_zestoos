@@ -92,12 +92,86 @@ const cellInput: React.CSSProperties = {
   outline:      'none',
 }
 
+// ── AutoFieldRow ──────────────────────────────────────────────────────────────
+// Linha "Label · valor [editar]". Touch target ≥44px, expande inline ao toque
+// e renderiza o controlo passado como children. Usada para campos automáticos.
+
+function AutoFieldRow({
+  label, value, placeholder, warning, expanded, onToggle, children, monoValue,
+}: {
+  label:        string
+  value:        string
+  placeholder?: string
+  warning?:     boolean
+  expanded:     boolean
+  onToggle:     () => void
+  children:     React.ReactNode
+  monoValue?:   boolean
+}) {
+  return (
+    <div style={{
+      background:   'var(--bg)',
+      border:       '1px solid var(--border)',
+      borderRadius: 8,
+      overflow:     'hidden',
+    }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        style={{
+          width:          '100%',
+          minHeight:      44,
+          padding:        '0 12px',
+          display:        'flex',
+          alignItems:     'center',
+          justifyContent: 'space-between',
+          background:     'transparent',
+          border:         'none',
+          color:          'var(--text)',
+          fontSize:       13,
+          cursor:         'pointer',
+          textAlign:      'left',
+        }}
+      >
+        <span style={{ display: 'flex', alignItems: 'baseline', gap: 4, minWidth: 0, flex: 1 }}>
+          <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>{label} ·</span>
+          <span style={{
+            color:        value ? (warning ? 'var(--warning)' : 'var(--text)') : 'var(--text-subtle)',
+            fontFamily:   monoValue ? 'JetBrains Mono, monospace' : undefined,
+            overflow:     'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace:   'nowrap',
+          }}>
+            {value || placeholder || '—'}
+          </span>
+        </span>
+        <span style={{
+          fontSize:      11,
+          color:         'var(--text-subtle)',
+          letterSpacing: '0.04em',
+          flexShrink:    0,
+          marginLeft:    8,
+        }}>
+          {expanded ? '▾' : 'editar'}
+        </span>
+      </button>
+      {expanded && (
+        <div style={{ padding: '0 12px 12px', borderTop: '1px solid var(--border)' }}>
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ArticleForm({ existing, articles, onSaved, onCancel }: Props) {
   const isEdit = !!existing
 
   const [name,               setName]              = useState(existing?.name     ?? '')
   const [category,           setCategory]          = useState(existing?.category ?? '')
-  const [showCategoryPicker, setShowCategoryPicker] = useState(false)
+  const [categoryExpanded,   setCategoryExpanded]  = useState(false)
+  const [unitExpanded,       setUnitExpanded]      = useState(false)
+  const [gPerUnitExpanded,   setGPerUnitExpanded]  = useState(false)
   const [unit,               setUnit]              = useState<'g' | 'mL' | 'un'>((existing?.unit as 'g' | 'mL' | 'un') ?? 'g')
   const [parLevel,           setParLevel]          = useState(existing ? String(existing.par_level) : '')
   const [gPerUnit,           setGPerUnit]          = useState(existing?.g_per_unit != null ? String(existing.g_per_unit) : '')
@@ -194,6 +268,12 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
         .catch(() => {})
     }
   }, [existing])
+
+  // Auto-expandir Peso quando unit==='un' e gPerUnit vazio. Peso vazio é
+  // crítico para fichas técnicas — não deve ficar escondido atrás duma linha.
+  useEffect(() => {
+    if (unit === 'un' && !gPerUnit) setGPerUnitExpanded(true)
+  }, [unit, gPerUnit])
 
   const updateLink = (key: string, partial: Partial<LinkRow>) =>
     setLinks(prev => prev.map(l => l.key === key ? { ...l, ...partial } : l))
@@ -345,176 +425,178 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           )}
         </div>
 
-        {/* Category */}
-        <div>
-          <label style={labelStyle}>CATEGORIA</label>
-          {!showCategoryPicker ? (
-            <button
-              type="button"
-              onClick={() => setShowCategoryPicker(true)}
-              style={{
-                width: '100%', height: 44, borderRadius: 8, textAlign: 'left',
-                padding: '0 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                background: category ? 'var(--surface-2)' : 'var(--bg)',
-                border: category ? '1px solid var(--border-focus)' : '1px solid var(--border)',
-                color: category ? 'var(--text)' : 'var(--text-subtle)',
-                fontSize: 14, cursor: 'pointer',
-              }}
-            >
-              <span>{category || 'Escolher categoria…'}</span>
-              <span style={{ fontSize: 11, opacity: 0.5 }}>▾</span>
-            </button>
-          ) : (
-            <div style={{ background: 'var(--bg)', border: '1px solid var(--border-focus)', borderRadius: 8, padding: '10px 10px 6px' }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                {ARTICLE_CATEGORIES.map(cat => {
-                  const isSelected  = category === cat
-                  const isSuggested = !category && suggestCategory({ name }).category === cat
-                  return (
-                    <button
-                      key={cat}
-                      type="button"
-                      onClick={() => { setCategory(cat); setShowCategoryPicker(false); setIsDirty(true) }}
-                      style={{
-                        padding: '6px 12px', borderRadius: 20, fontSize: 13, cursor: 'pointer',
-                        fontWeight: isSelected || isSuggested ? 600 : 400,
-                        border: isSelected ? '2px solid var(--action)' : isSuggested ? '1px solid var(--action)' : '1px solid var(--border)',
-                        background: isSelected ? 'var(--action)' : isSuggested ? 'var(--action-glow)' : 'transparent',
-                        color: isSelected ? 'var(--text-on-primary)' : 'var(--text)',
-                      }}
-                    >
-                      {cat}
-                    </button>
-                  )
-                })}
-              </div>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <input
-                  type="text"
-                  placeholder="Outra categoria…"
-                  value={(ARTICLE_CATEGORIES as readonly string[]).includes(category) ? '' : category}
-                  onChange={e => { setCategory(e.target.value); setIsDirty(true) }}
-                  onKeyDown={e => { if (e.key === 'Enter' && category.trim()) setShowCategoryPicker(false) }}
-                  style={{ ...inputStyle, flex: 1, height: 36, fontSize: 13 }}
-                />
-                {category && (
-                  <button
-                    type="button"
-                    onClick={() => { setCategory(''); setShowCategoryPicker(false); setIsDirty(true) }}
-                    style={{ height: 36, padding: '0 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-subtle)', fontSize: 12, cursor: 'pointer' }}
-                  >
-                    Limpar
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Unit — segmented control */}
-        <div>
-          <label style={labelStyle}>UNIDADE BASE</label>
-          <div style={{
-            display:      'flex',
-            border:       '1px solid var(--border)',
-            borderRadius: 8,
-            overflow:     'hidden',
-            background:   'var(--bg)',
-            width:        'fit-content',
+        {/* Detetado pelo sistema — campos automáticos com edição inline */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <p style={{
+            fontSize:      10,
+            color:         'var(--text-on-primary-subtle)',
+            letterSpacing: '0.08em',
+            margin:        '0 0 2px',
           }}>
-            {(['g', 'mL', 'un'] as const).map((u, i) => {
-              const isSelected = unit === u
-              return (
-                <button
-                  key={u}
-                  type="button"
-                  onClick={() => {
-                    setUnit(u)
-                    unitManuallySet.current = true
-                    setIsDirty(true)
-                    if (u === 'un' && !gPerUnit && name.trim()) {
-                      const hint = G_PER_UNIT_HINTS[normalizeKey(name)]
-                      if (hint) {
-                        setGPerUnit(String(hint))
-                        markAuto('gPerUnit')
-                      }
-                    }
-                  }}
-                  style={{
-                    minWidth:    64,
-                    height:      44,
-                    padding:     '0 18px',
-                    border:      'none',
-                    borderLeft:  i > 0 ? '1px solid var(--border)' : 'none',
-                    background:  isSelected ? 'var(--action)' : 'transparent',
-                    color:       isSelected ? 'var(--text-on-primary)' : 'var(--text)',
-                    fontFamily:  'JetBrains Mono, monospace',
-                    fontSize:    14,
-                    fontWeight:  isSelected ? 700 : 500,
-                    cursor:      'pointer',
-                    transition:  'background 0.15s, color 0.15s',
-                  }}
-                >
-                  {u}
-                </button>
-              )
-            })}
-          </div>
-        </div>
+            DETETADO PELO SISTEMA
+          </p>
 
-        {/* g por unidade — só para artigos contáveis */}
-        {unit === 'un' && (() => {
-          const gNum = parseFloat(gPerUnit)
-          const hasValue = !isNaN(gNum) && gNum > 0
-          const outOfRange = hasValue && (gNum < 5 || gNum > 2000)
-          return (
-            <div>
-              <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>PESO POR UNIDADE (g)</span>
-                {autoFilled.has('gPerUnit') && (
-                  <span style={{
-                    fontFamily:    'JetBrains Mono, monospace',
-                    letterSpacing: '0.05em',
-                    color:         'var(--text-on-primary-subtle)',
-                    fontWeight:    400,
-                    fontSize:      10,
-                  }}>·auto</span>
-                )}
-              </label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <input
-                  type="number"
-                  min="0.01"
-                  step="any"
-                  placeholder="ex: 52"
-                  value={gPerUnit}
-                  onChange={e => { setGPerUnit(e.target.value); unmarkAuto('gPerUnit'); setIsDirty(true) }}
-                  style={{ ...inputStyle, width: '40%' }}
-                />
-                {hasValue && (
-                  <span style={{
-                    fontSize:    12,
-                    color:       outOfRange ? 'var(--warning)' : 'var(--text-muted)',
-                    fontFamily:  'JetBrains Mono, monospace',
-                    flexShrink:  0,
-                  }}>
-                    1 un ≈ {gNum} g
-                  </span>
-                )}
-              </div>
-              {outOfRange && (
-                <p style={{ fontSize: 11, color: 'var(--warning)', marginTop: 4 }}>
-                  Valor fora do esperado (5–2000g) — confirma se correto
-                </p>
-              )}
-              {!gPerUnit && (
-                <p style={{ fontSize: 10, color: 'var(--text-subtle)', marginTop: 3 }}>
-                  Necessário para usar gramas nas fichas técnicas (ex: 150g ovos)
-                </p>
+          {/* Categoria */}
+          <AutoFieldRow
+            label="Categoria"
+            value={category}
+            placeholder="escolher…"
+            expanded={categoryExpanded}
+            onToggle={() => setCategoryExpanded(o => !o)}
+          >
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10, marginBottom: 8 }}>
+              {ARTICLE_CATEGORIES.map(cat => {
+                const isSelected  = category === cat
+                const isSuggested = !category && suggestCategory({ name }).category === cat
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => { setCategory(cat); setCategoryExpanded(false); setIsDirty(true) }}
+                    style={{
+                      padding: '6px 12px', borderRadius: 20, fontSize: 13, cursor: 'pointer',
+                      fontWeight: isSelected || isSuggested ? 600 : 400,
+                      border: isSelected ? '2px solid var(--action)' : isSuggested ? '1px solid var(--action)' : '1px solid var(--border)',
+                      background: isSelected ? 'var(--action)' : isSuggested ? 'var(--action-glow)' : 'transparent',
+                      color: isSelected ? 'var(--text-on-primary)' : 'var(--text)',
+                    }}
+                  >
+                    {cat}
+                  </button>
+                )
+              })}
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input
+                type="text"
+                placeholder="Outra categoria…"
+                value={(ARTICLE_CATEGORIES as readonly string[]).includes(category) ? '' : category}
+                onChange={e => { setCategory(e.target.value); setIsDirty(true) }}
+                onKeyDown={e => { if (e.key === 'Enter' && category.trim()) setCategoryExpanded(false) }}
+                style={{ ...inputStyle, flex: 1, height: 36, fontSize: 13 }}
+              />
+              {category && (
+                <button
+                  type="button"
+                  onClick={() => { setCategory(''); setCategoryExpanded(false); setIsDirty(true) }}
+                  style={{ height: 36, padding: '0 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-subtle)', fontSize: 12, cursor: 'pointer' }}
+                >
+                  Limpar
+                </button>
               )}
             </div>
-          )
-        })()}
+          </AutoFieldRow>
+
+          {/* Unidade base */}
+          <AutoFieldRow
+            label="Mede em"
+            value={unit}
+            monoValue
+            expanded={unitExpanded}
+            onToggle={() => setUnitExpanded(o => !o)}
+          >
+            <div style={{
+              display:      'flex',
+              border:       '1px solid var(--border)',
+              borderRadius: 8,
+              overflow:     'hidden',
+              background:   'var(--bg)',
+              width:        'fit-content',
+              marginTop:    10,
+            }}>
+              {(['g', 'mL', 'un'] as const).map((u, i) => {
+                const isSelected = unit === u
+                return (
+                  <button
+                    key={u}
+                    type="button"
+                    onClick={() => {
+                      setUnit(u)
+                      unitManuallySet.current = true
+                      setIsDirty(true)
+                      setUnitExpanded(false)
+                      if (u === 'un' && !gPerUnit && name.trim()) {
+                        const hint = G_PER_UNIT_HINTS[normalizeKey(name)]
+                        if (hint) {
+                          setGPerUnit(String(hint))
+                          markAuto('gPerUnit')
+                        }
+                      }
+                    }}
+                    style={{
+                      minWidth:    64,
+                      height:      44,
+                      padding:     '0 18px',
+                      border:      'none',
+                      borderLeft:  i > 0 ? '1px solid var(--border)' : 'none',
+                      background:  isSelected ? 'var(--action)' : 'transparent',
+                      color:       isSelected ? 'var(--text-on-primary)' : 'var(--text)',
+                      fontFamily:  'JetBrains Mono, monospace',
+                      fontSize:    14,
+                      fontWeight:  isSelected ? 700 : 500,
+                      cursor:      'pointer',
+                      transition:  'background 0.15s, color 0.15s',
+                    }}
+                  >
+                    {u}
+                  </button>
+                )
+              })}
+            </div>
+          </AutoFieldRow>
+
+          {/* Peso por unidade — só para unit === 'un' */}
+          {unit === 'un' && (() => {
+            const gNum       = parseFloat(gPerUnit)
+            const hasValue   = !isNaN(gNum) && gNum > 0
+            const outOfRange = hasValue && (gNum < 5 || gNum > 2000)
+            const isAuto     = autoFilled.has('gPerUnit')
+            const displayVal = hasValue ? `${gNum} g${isAuto ? ' ·auto' : ''}` : ''
+            return (
+              <AutoFieldRow
+                label="Peso"
+                value={displayVal}
+                placeholder="indicar…"
+                warning={outOfRange}
+                monoValue
+                expanded={gPerUnitExpanded}
+                onToggle={() => setGPerUnitExpanded(o => !o)}
+              >
+                <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="any"
+                    placeholder="ex: 52"
+                    value={gPerUnit}
+                    onChange={e => { setGPerUnit(e.target.value); unmarkAuto('gPerUnit'); setIsDirty(true) }}
+                    style={{ ...inputStyle, width: '40%' }}
+                  />
+                  {hasValue && (
+                    <span style={{
+                      fontSize:    12,
+                      color:       outOfRange ? 'var(--warning)' : 'var(--text-muted)',
+                      fontFamily:  'JetBrains Mono, monospace',
+                      flexShrink:  0,
+                    }}>
+                      1 un ≈ {gNum} g
+                    </span>
+                  )}
+                </div>
+                {outOfRange && (
+                  <p style={{ fontSize: 11, color: 'var(--warning)', marginTop: 6, marginBottom: 0 }}>
+                    Valor fora do esperado (5–2000g) — confirma se correto
+                  </p>
+                )}
+                {!gPerUnit && (
+                  <p style={{ fontSize: 10, color: 'var(--text-subtle)', marginTop: 6, marginBottom: 0 }}>
+                    Necessário para usar gramas nas fichas técnicas (ex: 150g ovos)
+                  </p>
+                )}
+              </AutoFieldRow>
+            )
+          })()}
+        </div>
 
         {/* Par Level */}
         {(() => {
