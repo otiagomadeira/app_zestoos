@@ -20,9 +20,15 @@ export default function InventoryScreen() {
   // antes de savingId atualizar.
   const submitInFlight = useRef(false)
   // Sessão de contagem persistida em localStorage por org+data. Recarregar
-  // mantém artigos contados marcados; à meia-noite local começa sessão nova.
+  // mantém artigos contados/saltados marcados; à meia-noite local começa
+  // sessão nova.
   const orgId = useCurrentOrgId()
-  const { counted: countedThisSession, addCounted } = useInventorySession(orgId)
+  const {
+    counted: countedThisSession,
+    skipped: skippedThisSession,
+    addCounted,
+    addSkipped,
+  } = useInventorySession(orgId)
   const [search,      setSearch]      = useState('')
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
   const [saveNoChange, setSaveNoChange] = useState<string | null>(null)
@@ -56,16 +62,22 @@ export default function InventoryScreen() {
 
   const sortedFiltered = useMemo(() => {
     const byName    = (a: CurrentStock, b: CurrentStock) => a.name.localeCompare(b.name, 'pt')
-    const counted   = filtered.filter(a =>  countedThisSession.has(a.article_id))
-    const uncounted = filtered.filter(a => !countedThisSession.has(a.article_id))
-    const belowPar  = uncounted.filter(a => a.current_qty < a.par_level)
-    const abovePar  = uncounted.filter(a => a.current_qty >= a.par_level)
+    const isHandled = (a: CurrentStock) =>
+      countedThisSession.has(a.article_id) || skippedThisSession.has(a.article_id)
+    const active    = filtered.filter(a => !isHandled(a))
+    const skipped   = filtered.filter(a => skippedThisSession.has(a.article_id))
+    const counted   = filtered.filter(a =>
+      countedThisSession.has(a.article_id) && !skippedThisSession.has(a.article_id)
+    )
+    const belowPar  = active.filter(a => a.current_qty < a.par_level)
+    const abovePar  = active.filter(a => a.current_qty >= a.par_level)
     return [
       ...belowPar.sort(byName),
       ...abovePar.sort(byName),
+      ...skipped.sort(byName),
       ...counted.sort(byName),
     ]
-  }, [filtered, countedThisSession])
+  }, [filtered, countedThisSession, skippedThisSession])
 
   const selectedArticle = useMemo(
     () => articles.find(a => a.article_id === selectedId) ?? null,
@@ -102,14 +114,21 @@ export default function InventoryScreen() {
   }, [])
 
   const advanceToNext = useCallback((fromId: string) => {
-    const idx  = sortedFiltered.findIndex(a => a.article_id === fromId)
-    const next = sortedFiltered[idx + 1]
-    if (next && !countedThisSession.has(next.article_id)) {
-      setSelectedId(next.article_id)
-    } else {
-      setSelectedId(null)
+    const idx = sortedFiltered.findIndex(a => a.article_id === fromId)
+    // Avança para o próximo ainda não tratado (nem contado, nem saltado).
+    // Loop linear porque a lista já vem ordenada com handled no fim — sai cedo.
+    for (let i = idx + 1; i < sortedFiltered.length; i++) {
+      const candidate = sortedFiltered[i]
+      if (
+        !countedThisSession.has(candidate.article_id) &&
+        !skippedThisSession.has(candidate.article_id)
+      ) {
+        setSelectedId(candidate.article_id)
+        return
+      }
     }
-  }, [sortedFiltered, countedThisSession])
+    setSelectedId(null)
+  }, [sortedFiltered, countedThisSession, skippedThisSession])
 
   const handleConfirm = useCallback(async () => {
     // Guard síncrono: rejeita re-entry imediato (double-tap).
@@ -153,9 +172,9 @@ export default function InventoryScreen() {
   const handleSkip = useCallback(() => {
     if (!selectedArticle) return
     const articleId = selectedArticle.article_id
-    addCounted(articleId)
+    addSkipped(articleId)
     advanceToNext(articleId)
-  }, [selectedArticle, advanceToNext, addCounted])
+  }, [selectedArticle, advanceToNext, addSkipped])
 
   const belowPar = articles.filter(a => a.current_qty < a.par_level).length
 
@@ -270,6 +289,7 @@ export default function InventoryScreen() {
                 article={article}
                 isExpanded={selectedId === id}
                 isCounted={countedThisSession.has(id)}
+                isSkipped={skippedThisSession.has(id)}
                 isSaving={savingId === id}
                 onClick={() => handleSelect(id)}
               />

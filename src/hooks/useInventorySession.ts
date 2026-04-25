@@ -103,10 +103,15 @@ export function useInventorySession(orgId: string | null) {
 
   const addSkipped = useCallback((id: string) => {
     setState(prev => {
-      if (prev.skipped.has(id) || prev.counted.has(id)) return prev
-      const nextSkipped = new Set(prev.skipped).add(id)
-      persist(prev.counted, nextSkipped)
-      return { counted: prev.counted, skipped: nextSkipped, hydrated: prev.hydrated }
+      const alreadySkipped = prev.skipped.has(id)
+      const wasCounted     = prev.counted.has(id)
+      if (alreadySkipped && !wasCounted) return prev
+      // saltar promove um counted → skipped (remove da lista de counted)
+      const nextSkipped = alreadySkipped ? prev.skipped : new Set(prev.skipped).add(id)
+      let nextCounted = prev.counted
+      if (wasCounted) { nextCounted = new Set(prev.counted); nextCounted.delete(id) }
+      persist(nextCounted, nextSkipped)
+      return { counted: nextCounted, skipped: nextSkipped, hydrated: prev.hydrated }
     })
   }, [persist])
 

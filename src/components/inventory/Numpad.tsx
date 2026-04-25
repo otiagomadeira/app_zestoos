@@ -248,23 +248,30 @@ export default function Numpad({
           />
         </div>
 
-        {/* Skip (opcional) */}
+        {/* Skip — "?" marca como saltado (volto depois). Não confunde com OK
+            (sucesso de contagem) nem com fechar (sem efeito). */}
         {onSkip && (
           <button
             type="button"
             onPointerDown={press(onSkip)}
+            aria-label="Saltar — não contei agora, volto depois"
             style={{
               background:    'transparent',
-              border:        'none',
+              border:        '1px solid var(--border-on-primary)',
               color:         'var(--text-on-primary-muted)',
-              fontSize:      13,
-              padding:       '6px 0',
+              fontSize:      14,
+              fontWeight:    600,
+              padding:       '10px 16px',
+              borderRadius:  10,
               cursor:        'pointer',
-              textDecoration: 'underline',
               alignSelf:     'center',
+              display:       'inline-flex',
+              alignItems:    'center',
+              gap:           8,
             }}
           >
-            marcar como contado sem alterar
+            <span style={{ fontFamily: 'var(--font-mono), monospace', fontSize: 16, fontWeight: 700 }}>?</span>
+            saltar (volto depois)
           </button>
         )}
 

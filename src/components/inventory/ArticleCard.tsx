@@ -8,6 +8,7 @@ interface ArticleCardProps {
   isExpanded?: boolean
   isSaving?:   boolean
   isCounted?:  boolean
+  isSkipped?:  boolean
   onClick:     () => void
 }
 
@@ -21,6 +22,7 @@ export default function ArticleCard({
   isExpanded,
   isSaving,
   isCounted,
+  isSkipped,
   onClick,
 }: ArticleCardProps) {
   const isBelowPar  = article.current_qty < article.par_level
@@ -71,6 +73,20 @@ export default function ArticleCard({
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{article.name}</span>
               {isCounted && (
                 <span style={{ fontSize: 12, color: 'var(--success)', fontWeight: 700, flexShrink: 0 }}>✓</span>
+              )}
+              {isSkipped && !isCounted && (
+                <span
+                  aria-label="Saltado nesta sessão"
+                  style={{
+                    fontFamily: 'var(--font-mono), monospace',
+                    fontSize:   13,
+                    color:      'var(--text-subtle)',
+                    fontWeight: 700,
+                    flexShrink: 0,
+                  }}
+                >
+                  ?
+                </span>
               )}
               {isSaving && (
                 <span style={{ fontSize: 12, color: 'var(--text-subtle)', flexShrink: 0 }}>…</span>
