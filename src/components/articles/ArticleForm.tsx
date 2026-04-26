@@ -8,7 +8,7 @@ import {
   createArticleSizeIfMissing,
 } from '@/lib/supabase'
 import { ORDER_UNITS, formatUnit, formatStockQty } from '@/lib/units'
-import { ARTICLE_CATEGORIES, suggestCategory } from '@/lib/categoryKeywords'
+import { ARTICLE_CATEGORIES } from '@/lib/categoryKeywords'
 import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
 import { normalizeArticleInput } from '@/lib/normalizeArticle'
 import { buildArticleDraft, formatDraftHint, type ArticleDraft } from '@/lib/articleDraft'
@@ -93,86 +93,11 @@ const cellInput: React.CSSProperties = {
   outline:      'none',
 }
 
-// ── AutoFieldRow ──────────────────────────────────────────────────────────────
-// Linha "Label · valor [editar]". Touch target ≥44px, expande inline ao toque
-// e renderiza o controlo passado como children. Usada para campos automáticos.
-
-function AutoFieldRow({
-  label, value, placeholder, warning, expanded, onToggle, children, monoValue,
-}: {
-  label:        string
-  value:        string
-  placeholder?: string
-  warning?:     boolean
-  expanded:     boolean
-  onToggle:     () => void
-  children:     React.ReactNode
-  monoValue?:   boolean
-}) {
-  return (
-    <div style={{
-      background:   'var(--bg)',
-      border:       '1px solid var(--border)',
-      borderRadius: 8,
-      overflow:     'hidden',
-    }}>
-      <button
-        type="button"
-        onClick={onToggle}
-        style={{
-          width:          '100%',
-          minHeight:      44,
-          padding:        '0 12px',
-          display:        'flex',
-          alignItems:     'center',
-          justifyContent: 'space-between',
-          background:     'transparent',
-          border:         'none',
-          color:          'var(--text)',
-          fontSize:       13,
-          cursor:         'pointer',
-          textAlign:      'left',
-        }}
-      >
-        <span style={{ display: 'flex', alignItems: 'baseline', gap: 4, minWidth: 0, flex: 1 }}>
-          <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>{label} ·</span>
-          <span style={{
-            color:        value ? (warning ? 'var(--warning)' : 'var(--text)') : 'var(--text-subtle)',
-            fontFamily:   monoValue ? 'JetBrains Mono, monospace' : undefined,
-            overflow:     'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace:   'nowrap',
-          }}>
-            {value || placeholder || '—'}
-          </span>
-        </span>
-        <span style={{
-          fontSize:      11,
-          color:         'var(--text-subtle)',
-          letterSpacing: '0.04em',
-          flexShrink:    0,
-          marginLeft:    8,
-        }}>
-          {expanded ? '▾' : 'editar'}
-        </span>
-      </button>
-      {expanded && (
-        <div style={{ padding: '0 12px 12px', borderTop: '1px solid var(--border)' }}>
-          {children}
-        </div>
-      )}
-    </div>
-  )
-}
-
 export default function ArticleForm({ existing, articles, onSaved, onCancel }: Props) {
   const isEdit = !!existing
 
   const [name,               setName]              = useState(existing?.name     ?? '')
   const [category,           setCategory]          = useState(existing?.category ?? '')
-  const [categoryExpanded,   setCategoryExpanded]  = useState(false)
-  const [unitExpanded,       setUnitExpanded]      = useState(false)
-  const [gPerUnitExpanded,   setGPerUnitExpanded]  = useState(false)
   const [unit,               setUnit]              = useState<'g' | 'mL' | 'un'>((existing?.unit as 'g' | 'mL' | 'un') ?? 'g')
   const [parLevel,           setParLevel]          = useState(existing ? String(existing.par_level) : '')
   const [parLevelDisplay,    setParLevelDisplay]   = useState('')
@@ -301,12 +226,6 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
     }
   }, [existing])
 
-  // Auto-expandir Peso quando unit==='un' e gPerUnit vazio. Peso vazio é
-  // crítico para fichas técnicas — não deve ficar escondido atrás duma linha.
-  useEffect(() => {
-    if (unit === 'un' && !gPerUnit) setGPerUnitExpanded(true)
-  }, [unit, gPerUnit])
-
   // Sincronizar display do Stock Mínimo quando a fonte de unidade muda
   // (e.g., adiciona/remove fornecedor, muda preferred ou conversion_factor).
   // Não inclui parLevel nas deps — durante digitação, o display é controlado
@@ -337,7 +256,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   const handleSave = async () => {
     if (!name.trim()) return setError('Nome é obrigatório')
     const par = parseFloat(parLevel)
-    if (isNaN(par) || par < 0) return setError('Par level inválido')
+    if (isNaN(par) || par < 0) return setError('Stock mínimo inválido')
 
     const validLinks = links.filter(l =>
       l.supplier_id && parseFloat(l.price) > 0 && l.order_unit.trim()
@@ -543,79 +462,62 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           )}
         </div>
 
-        {/* Detetado pelo sistema — só aparece quando há algo para detetar.
-            Form vazio fica leve; bloco surge ao escrever ou em edição. */}
-        {(isEdit || name.trim() !== '' || parsedHint !== null) && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <p style={{
-            fontSize:      10,
-            color:         'var(--text-on-primary-subtle)',
-            letterSpacing: '0.08em',
-            margin:        '0 0 2px',
-          }}>
-            DETETADO PELO SISTEMA
-          </p>
-
-          {/* Categoria */}
-          <AutoFieldRow
-            label="Categoria"
-            value={category}
-            placeholder="escolher…"
-            expanded={categoryExpanded}
-            onToggle={() => setCategoryExpanded(o => !o)}
-          >
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10, marginBottom: 8 }}>
-              {ARTICLE_CATEGORIES.map(cat => {
-                const isSelected  = category === cat
-                const isSuggested = !category && suggestCategory({ name }).category === cat
-                return (
-                  <button
-                    key={cat}
-                    type="button"
-                    onClick={() => { setCategory(cat); setCategoryExpanded(false); setIsDirty(true) }}
-                    style={{
-                      padding: '6px 12px', borderRadius: 20, fontSize: 13, cursor: 'pointer',
-                      fontWeight: isSelected || isSuggested ? 600 : 400,
-                      border: isSelected ? '2px solid var(--action)' : isSuggested ? '1px solid var(--action)' : '1px solid var(--border)',
-                      background: isSelected ? 'var(--action)' : isSuggested ? 'var(--action-glow)' : 'transparent',
-                      color: isSelected ? 'var(--text-on-primary)' : 'var(--text)',
-                    }}
-                  >
-                    {cat}
-                  </button>
-                )
-              })}
-            </div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <input
-                type="text"
-                placeholder="Outra categoria…"
-                value={(ARTICLE_CATEGORIES as readonly string[]).includes(category) ? '' : category}
-                onChange={e => { setCategory(e.target.value); setIsDirty(true) }}
-                onKeyDown={e => { if (e.key === 'Enter' && category.trim()) setCategoryExpanded(false) }}
-                style={{ ...inputStyle, flex: 1, height: 36, fontSize: 13 }}
-              />
-              {category && (
+        {/* Categoria — campos directos, sem header de secção. Chips em
+            wrap + input para "outra categoria". Não há lógica de "sugestão"
+            destacada porque o parser já preenche category quando confiante;
+            o user só vê os chips e escolhe. */}
+        <div>
+          <label style={labelStyle}>CATEGORIA</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+            {ARTICLE_CATEGORIES.map(cat => {
+              const isSelected = category === cat
+              return (
                 <button
+                  key={cat}
                   type="button"
-                  onClick={() => { setCategory(''); setCategoryExpanded(false); setIsDirty(true) }}
-                  style={{ height: 36, padding: '0 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-subtle)', fontSize: 12, cursor: 'pointer' }}
+                  onClick={() => { setCategory(cat); setIsDirty(true) }}
+                  style={{
+                    padding:    '6px 12px',
+                    borderRadius: 20,
+                    fontSize:   13,
+                    cursor:     'pointer',
+                    fontWeight: isSelected ? 600 : 400,
+                    border:     isSelected ? '2px solid var(--action)' : '1px solid var(--border)',
+                    background: isSelected ? 'var(--action)' : 'transparent',
+                    color:      isSelected ? 'var(--text-on-primary)' : 'var(--text)',
+                  }}
                 >
-                  Limpar
+                  {cat}
                 </button>
-              )}
-            </div>
-          </AutoFieldRow>
+              )
+            })}
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input
+              type="text"
+              placeholder="Outra categoria…"
+              value={(ARTICLE_CATEGORIES as readonly string[]).includes(category) ? '' : category}
+              onChange={e => { setCategory(e.target.value); setIsDirty(true) }}
+              style={{ ...inputStyle, flex: 1, height: 36, fontSize: 13 }}
+            />
+            {category && (
+              <button
+                type="button"
+                onClick={() => { setCategory(''); setIsDirty(true) }}
+                style={{ height: 36, padding: '0 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-subtle)', fontSize: 12, cursor: 'pointer' }}
+              >
+                Limpar
+              </button>
+            )}
+          </div>
+        </div>
 
-          {/* Unidade base — escondido quando parser detetou unidade explícita */}
-          {!hideUnitBlock && (
-          <AutoFieldRow
-            label="Mede em"
-            value={unit}
-            monoValue
-            expanded={unitExpanded}
-            onToggle={() => setUnitExpanded(o => !o)}
-          >
+        {/* Unidade — segmented sempre visível. hideUnitBlock continua a
+            esconder em criação se o parser já detetou peso/volume explícito,
+            evitando perguntar o que já é certo. */}
+        {!hideUnitBlock && (
+          <div>
+            <label style={labelStyle}>UNIDADE</label>
             <div style={{
               display:      'flex',
               border:       '1px solid var(--border)',
@@ -623,7 +525,6 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
               overflow:     'hidden',
               background:   'var(--bg)',
               width:        'fit-content',
-              marginTop:    10,
             }}>
               {(['g', 'mL', 'un'] as const).map((u, i) => {
                 const isSelected = unit === u
@@ -635,7 +536,6 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                       setUnit(u)
                       unitManuallySet.current = true
                       setIsDirty(true)
-                      setUnitExpanded(false)
                       if (u === 'un' && !gPerUnit && name.trim()) {
                         const hint = G_PER_UNIT_HINTS[normalizeKey(name)]
                         if (hint) {
@@ -664,62 +564,107 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                 )
               })}
             </div>
-          </AutoFieldRow>
-          )}
+          </div>
+        )}
 
-          {/* Peso por unidade — só para unit === 'un' */}
-          {unit === 'un' && (() => {
-            const gNum       = parseFloat(gPerUnit)
-            const hasValue   = !isNaN(gNum) && gNum > 0
-            const outOfRange = hasValue && (gNum < 5 || gNum > 2000)
-            const isAuto     = autoFilled.has('gPerUnit')
-            const displayVal = hasValue ? `${gNum} g${isAuto ? ' ·auto' : ''}` : ''
-            return (
-              <AutoFieldRow
-                label="Peso"
-                value={displayVal}
-                placeholder="indicar…"
-                warning={outOfRange}
-                monoValue
-                expanded={gPerUnitExpanded}
-                onToggle={() => setGPerUnitExpanded(o => !o)}
-              >
-                <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="any"
-                    placeholder="ex: 52"
-                    value={gPerUnit}
-                    onChange={e => { setGPerUnit(e.target.value); unmarkAuto('gPerUnit'); setIsDirty(true) }}
-                    style={{ ...inputStyle, width: '40%' }}
-                  />
-                  {hasValue && (
-                    <span style={{
-                      fontSize:    12,
-                      color:       outOfRange ? 'var(--warning)' : 'var(--text-muted)',
-                      fontFamily:  'JetBrains Mono, monospace',
-                      flexShrink:  0,
-                    }}>
-                      1 un ≈ {gNum} g
-                    </span>
+        {/* STOCK — agrupa parâmetros operacionais. Stock mínimo dispara
+            sugestão de encomenda; Peso por unidade só aparece quando o
+            artigo se conta à unidade (un) e é necessário para fichas
+            técnicas em gramas. */}
+        <div>
+          <p style={{ fontSize: 11, color: 'var(--text-on-primary-subtle)', letterSpacing: '0.08em', marginBottom: 8 }}>
+            STOCK
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {/* Stock mínimo — input na unidade do chef (caixa, frasco,
+                garrafão); par_level continua guardado em base_unit. Fonte
+                de unidade: link preferred → qualquer link válido → seed
+                do parser → base_unit. */}
+            <div>
+              <label style={labelStyle}>
+                STOCK MÍNIMO (em {parMinUnit ?? unit})
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="0"
+                  value={parLevelDisplay}
+                  onChange={e => {
+                    const v = e.target.value
+                    setParLevelDisplay(v)
+                    const num = parseFloat(v)
+                    if (v === '' || isNaN(num) || num < 0) {
+                      setParLevel('')
+                    } else {
+                      setParLevel(String(parUseOrderUnit ? num * parMinFactor : num))
+                    }
+                    setIsDirty(true)
+                  }}
+                  style={{ ...inputStyle, width: '40%' }}
+                />
+                {parUseOrderUnit && (parseFloat(parLevel) || 0) > 0 && (
+                  <span style={{
+                    fontSize:   12,
+                    color:      'var(--text-on-primary-subtle)',
+                    fontFamily: 'JetBrains Mono, monospace',
+                    flexShrink: 0,
+                  }}>
+                    ≈ {formatStockQty(parseFloat(parLevel), unit)}
+                  </span>
+                )}
+              </div>
+              <p style={{ fontSize: 10, color: 'var(--text-on-primary-subtle)', marginTop: 3 }}>
+                Quando o stock baixar deste valor, o Zesto sugere encomenda.
+              </p>
+            </div>
+
+            {/* Peso por unidade — só para unit==='un'. Necessário para
+                fichas técnicas em gramas (ex.: 150g de ovos). */}
+            {unit === 'un' && (() => {
+              const gNum       = parseFloat(gPerUnit)
+              const hasValue   = !isNaN(gNum) && gNum > 0
+              const outOfRange = hasValue && (gNum < 5 || gNum > 2000)
+              return (
+                <div>
+                  <label style={labelStyle}>PESO POR UNIDADE (g)</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="any"
+                      placeholder="ex: 52"
+                      value={gPerUnit}
+                      onChange={e => { setGPerUnit(e.target.value); unmarkAuto('gPerUnit'); setIsDirty(true) }}
+                      style={{ ...inputStyle, width: '40%' }}
+                    />
+                    {hasValue && (
+                      <span style={{
+                        fontSize:    12,
+                        color:       outOfRange ? 'var(--warning)' : 'var(--text-on-primary-subtle)',
+                        fontFamily:  'JetBrains Mono, monospace',
+                        flexShrink:  0,
+                      }}>
+                        1 un ≈ {gNum} g
+                      </span>
+                    )}
+                  </div>
+                  {outOfRange && (
+                    <p style={{ fontSize: 11, color: 'var(--warning)', marginTop: 6, marginBottom: 0 }}>
+                      Valor fora do esperado (5–2000g) — confirma se correto.
+                    </p>
+                  )}
+                  {!gPerUnit && (
+                    <p style={{ fontSize: 10, color: 'var(--text-on-primary-subtle)', marginTop: 3, marginBottom: 0 }}>
+                      Necessário para usar gramas nas fichas técnicas (ex: 150g ovos).
+                    </p>
                   )}
                 </div>
-                {outOfRange && (
-                  <p style={{ fontSize: 11, color: 'var(--warning)', marginTop: 6, marginBottom: 0 }}>
-                    Valor fora do esperado (5–2000g) — confirma se correto
-                  </p>
-                )}
-                {!gPerUnit && (
-                  <p style={{ fontSize: 10, color: 'var(--text-subtle)', marginTop: 6, marginBottom: 0 }}>
-                    Necessário para usar gramas nas fichas técnicas (ex: 150g ovos)
-                  </p>
-                )}
-              </AutoFieldRow>
-            )
-          })()}
+              )
+            })()}
+          </div>
         </div>
-        )}
 
         {/* Supplier links */}
         <div>
@@ -959,50 +904,9 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           </button>
         </div>
 
-        {/* Par Level — input na unidade do chef (caixa, frasco, garrafão);
-            par_level continua guardado em base_unit. Fonte de unidade: link
-            preferred → qualquer link válido → seed do parser → base_unit. */}
-        <div>
-          <label style={labelStyle}>
-            STOCK MÍNIMO (em {parMinUnit ?? unit})
-          </label>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <input
-              type="number"
-              min="0"
-              step="any"
-              placeholder="0"
-              value={parLevelDisplay}
-              onChange={e => {
-                const v = e.target.value
-                setParLevelDisplay(v)
-                const num = parseFloat(v)
-                if (v === '' || isNaN(num) || num < 0) {
-                  setParLevel('')
-                } else {
-                  setParLevel(String(parUseOrderUnit ? num * parMinFactor : num))
-                }
-                setIsDirty(true)
-              }}
-              style={{ ...inputStyle, width: '40%' }}
-            />
-            {parUseOrderUnit && (parseFloat(parLevel) || 0) > 0 && (
-              <span style={{
-                fontSize:   12,
-                color:      'var(--text-on-primary-subtle)',
-                fontFamily: 'JetBrains Mono, monospace',
-                flexShrink: 0,
-              }}>
-                ≈ {formatStockQty(parseFloat(parLevel), unit)}
-              </span>
-            )}
-          </div>
-          <p style={{ fontSize: 10, color: 'var(--text-on-primary-subtle)', marginTop: 3 }}>
-            Abaixo deste valor o sistema sugere encomenda
-          </p>
-        </div>
-
-        {/* Deactivate */}
+        {/* Desativar — render directo, sem header "Zona de risco" formal:
+            é uma única acção destrutiva. Promovemos a secção quando houver
+            mais (eliminar, exportar, etc.). */}
         {isEdit && (
           <div style={{ paddingTop: 16, borderTop: `1px solid var(--border-on-primary-soft)` }}>
             <button
@@ -1036,18 +940,13 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
         )}
       </div>
 
-      {/* Footer */}
-      <div style={{ paddingTop: 16, borderTop: `1px solid var(--border-on-primary-soft)`, marginTop: 16, display: 'flex', gap: 10, flexShrink: 0 }}>
-        <button
-          onClick={handleCancel}
-          style={{ flex: 1, height: 48, borderRadius: 10, border: `1px solid var(--border-on-primary)`, background: 'transparent', color: 'var(--text-on-primary-muted)', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}
-        >
-          ← Voltar
-        </button>
+      {/* Footer — só Guardar. O voltar/cancelar já está claro no header
+          (chevron ←); duplicar no rodapé era ruído. */}
+      <div style={{ paddingTop: 16, borderTop: `1px solid var(--border-on-primary-soft)`, marginTop: 16, flexShrink: 0 }}>
         <button
           onClick={handleSave}
           disabled={saving}
-          style={{ flex: 2, height: 48, borderRadius: 10, border: 'none', background: 'var(--action)', color: 'var(--text-on-primary)', fontSize: 15, fontWeight: 600, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1 }}
+          style={{ width: '100%', height: 48, borderRadius: 10, border: 'none', background: 'var(--action)', color: 'var(--text-on-primary)', fontSize: 15, fontWeight: 600, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1 }}
         >
           {saving ? 'A guardar…' : isEdit ? 'Guardar Alterações' : 'Guardar Artigo'}
         </button>
