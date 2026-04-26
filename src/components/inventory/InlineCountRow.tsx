@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CurrentStock } from '@/types/database'
 import { useArticleAutosave, type AutosaveStatus } from '@/lib/inventory/useArticleAutosave'
 import { formatPackagingLabel } from '@/lib/inventory/formatPackagingLabel'
@@ -102,12 +102,28 @@ export default function InlineCountRow({
     if (status === 'error') void retry()
   }, [status, retry])
 
-  // ✓ persistente quando contado e sem operação em curso (status idle).
-  // Durante saving/saved/dirty/error o StatusIcon comunica o estado.
-  const showCountedTick = isCounted && status === 'idle'
+  // Layout adaptativo medido pela largura real do card (não da viewport).
+  // Abaixo do threshold parte para 2 linhas: nome em cima, status+unit+stepper
+  // alinhados à direita em baixo. Garante que iPhones pequenos (SE/12 mini)
+  // e split-view de tablets nunca cortam o nome.
+  // Sem ✓ persistente: o número dentro do input já é o sinal de "contado"
+  // nesta sessão; o StatusIcon transitório (… ✓ !) cobre o feedback de save.
+  const cardRef = useRef<HTMLDivElement>(null)
+  const [twoLine, setTwoLine] = useState<boolean>(false)
+  useEffect(() => {
+    const el = cardRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width ?? 0
+      setTwoLine(w < 360)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   return (
     <div
+      ref={cardRef}
       style={{
         width:        '100%',
         background:   'var(--surface)',
@@ -117,7 +133,9 @@ export default function InlineCountRow({
         minHeight:    56,
         display:      'flex',
         alignItems:   'center',
+        flexWrap:     'wrap',
         gap:          6,
+        rowGap:       twoLine ? 4 : 0,
       }}
     >
       <span style={{
@@ -127,38 +145,38 @@ export default function InlineCountRow({
         whiteSpace:   'nowrap',
         overflow:     'hidden',
         textOverflow: 'ellipsis',
-        flex:         1,
+        // Em 2 linhas: nome ocupa toda a largura. Em 1 linha: nome cresce a
+        // partir de 0 e absorve a folga, com ellipsis se necessário.
+        flex:         twoLine ? '1 0 100%' : '1 1 0%',
         minWidth:     0,
       }}>
         {article.name}
       </span>
-      {showCountedTick && (
-        <span
-          aria-label="Contado nesta sessão"
-          style={{ fontSize: 13, color: 'var(--success)', fontWeight: 700, flexShrink: 0 }}
-        >
-          ✓
-        </span>
-      )}
-      <StatusIcon status={status} error={error} onActivate={handleStatusActivate} />
 
-      <span style={{
-        fontSize:     12,
-        color:        'var(--text-muted)',
-        whiteSpace:   'nowrap',
-        flexShrink:   0,
-        // Unit antes do stepper → o stepper fica sempre encostado à direita,
-        // logo os botões `+` ficam alinhados entre todos os cards. Largura
-        // natural; maxWidth defensivo para labels patológicas.
-        maxWidth:     140,
-        overflow:     'hidden',
-        textOverflow: 'ellipsis',
-        textAlign:    'right',
+      <div style={{
+        display:     'flex',
+        alignItems:  'center',
+        gap:         6,
+        flexShrink:  0,
+        // Em 2 linhas: empurrado para a direita na 2ª linha. Em 1 linha:
+        // junto à unit/nome, à direita do nome (que tem flex:1).
+        marginLeft:  twoLine ? 'auto' : 0,
       }}>
-        {unitDisplay}
-      </span>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+        <StatusIcon status={status} error={error} onActivate={handleStatusActivate} />
+        <span style={{
+          fontSize:     12,
+          color:        'var(--text-muted)',
+          whiteSpace:   'nowrap',
+          flexShrink:   0,
+          // Largura natural; maxWidth defensivo para labels patológicas.
+          maxWidth:     140,
+          overflow:     'hidden',
+          textOverflow: 'ellipsis',
+          textAlign:    'right',
+        }}>
+          {unitDisplay}
+        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
         <button
           type="button"
           onClick={handleMinus}
@@ -258,6 +276,7 @@ export default function InlineCountRow({
             justifyContent: 'center',
           }}
         >+</button>
+        </div>
       </div>
     </div>
   )
