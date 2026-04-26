@@ -62,35 +62,53 @@ const emptyLink = (): LinkRow => ({
 })
 
 const labelStyle: React.CSSProperties = {
-  fontSize:      11,
-  color:         'var(--text-on-primary-muted)',
-  letterSpacing: '0.06em',
-  marginBottom:  4,
+  fontSize:      10,
+  fontWeight:    700,
+  color:         'var(--text-muted)',
+  letterSpacing: '0.1em',
+  marginBottom:  8,
   display:       'block',
+  textTransform: 'uppercase',
+}
+
+// Header de secção (STOCK, FORNECEDORES). Maior peso que labelStyle para
+// criar hierarquia clara entre "secção" e "campo dentro da secção".
+const sectionHeaderStyle: React.CSSProperties = {
+  fontSize:      11,
+  fontWeight:    800,
+  color:         'var(--text)',
+  letterSpacing: '0.12em',
+  marginBottom:  12,
+  marginTop:     8,
+  textTransform: 'uppercase',
+  paddingBottom: 6,
+  borderBottom:  '1px solid var(--border)',
 }
 
 const inputStyle: React.CSSProperties = {
   width:        '100%',
-  height:       40,
-  background:   'var(--bg)',
+  height:       44,
+  background:   'var(--surface)',
   border:       '1px solid var(--border)',
   borderRadius: 8,
-  padding:      '0 12px',
+  padding:      '0 14px',
   color:        'var(--text)',
-  fontSize:     14,
+  fontSize:     15,
   outline:      'none',
+  fontFamily:   'inherit',
 }
 
 const cellInput: React.CSSProperties = {
   width:        '100%',
   height:       44,
-  background:   'var(--bg)',
+  background:   'var(--surface)',
   border:       '1px solid var(--border)',
   borderRadius: 6,
-  padding:      '0 8px',
+  padding:      '0 10px',
   color:        'var(--text)',
-  fontSize:     13,
+  fontSize:     14,
   outline:      'none',
+  fontFamily:   'inherit',
 }
 
 export default function ArticleForm({ existing, articles, onSaved, onCancel }: Props) {
@@ -350,18 +368,15 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Header sticky com chevron de voltar — antes só havia "← Voltar" no
-          rodapé do form, o que em mobile obrigava a scroll de ~1000 linhas
-          para sair sem guardar. O ícone à esquerda + título à direita
-          espelham o padrão usado em AliasManagerPanel/BulkImportPanel. */}
+      {/* Header — chevron de voltar + eyebrow + título. Tom contínuo com
+          o resto da app (cream); antes era dark e isolava o painel. */}
       <div style={{
         flexShrink:    0,
-        padding:       '16px 20px 12px',
-        borderBottom:  '1px solid var(--border-on-primary-soft)',
+        padding:       '20px 24px 16px',
+        borderBottom:  '1px solid var(--border)',
         display:       'flex',
         alignItems:    'center',
-        gap:           12,
-        marginBottom:  16,
+        gap:           14,
       }}>
         <button
           type="button"
@@ -370,47 +385,60 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           style={{
             width:          'var(--touch-min)',
             height:         'var(--touch-min)',
-            borderRadius:   8,
-            border:         '1px solid var(--border-on-primary)',
-            background:     'transparent',
-            color:          'var(--text-on-primary-muted)',
-            fontSize:       18,
+            borderRadius:   10,
+            border:         '1px solid var(--border)',
+            background:     'var(--surface)',
+            color:          'var(--text-muted)',
+            fontSize:       20,
             cursor:         'pointer',
             display:        'flex',
             alignItems:     'center',
             justifyContent: 'center',
             flexShrink:     0,
             touchAction:    'manipulation',
+            transition:     'border-color 0.15s, color 0.15s',
           }}
         >
           ←
         </button>
         <div style={{ minWidth: 0, flex: 1 }}>
           <p style={{
-            fontSize:      11,
-            color:         'var(--text-on-primary-subtle)',
-            letterSpacing: '0.08em',
-            marginBottom:  2,
+            fontSize:      10,
+            color:         'var(--text-subtle)',
+            letterSpacing: '0.14em',
+            fontWeight:    700,
             margin:        0,
+            marginBottom:  3,
+            textTransform: 'uppercase',
           }}>
-            {isEdit ? 'EDITAR ARTIGO' : 'NOVO ARTIGO'}
+            {isEdit ? 'Editar artigo' : 'Novo artigo'}
           </p>
           <h3 style={{
-            fontSize:     18,
-            fontWeight:   700,
-            color:        'var(--text-on-primary)',
-            margin:       0,
-            whiteSpace:   'nowrap',
-            overflow:     'hidden',
-            textOverflow: 'ellipsis',
+            fontFamily:    "'Playfair Display', serif",
+            fontSize:      24,
+            fontWeight:    600,
+            color:         'var(--text)',
+            margin:        0,
+            whiteSpace:    'nowrap',
+            overflow:      'hidden',
+            textOverflow:  'ellipsis',
+            letterSpacing: '-0.015em',
+            lineHeight:    1.15,
           }}>
             {isEdit ? existing.name : 'Novo Artigo'}
           </h3>
         </div>
       </div>
 
-      {/* Body */}
-      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14, padding: '0 20px' }}>
+      {/* Body — gap mais generoso e padding lateral 24px para respirar */}
+      <div style={{
+        flex:          1,
+        overflowY:     'auto',
+        display:       'flex',
+        flexDirection: 'column',
+        gap:           20,
+        padding:       '20px 24px 8px',
+      }}>
 
         {/* Name */}
         <div>
@@ -462,55 +490,15 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           )}
         </div>
 
-        {/* Categoria — campos directos, sem header de secção. Chips em
-            wrap + input para "outra categoria". Não há lógica de "sugestão"
-            destacada porque o parser já preenche category quando confiante;
-            o user só vê os chips e escolhe. */}
-        <div>
-          <label style={labelStyle}>CATEGORIA</label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-            {ARTICLE_CATEGORIES.map(cat => {
-              const isSelected = category === cat
-              return (
-                <button
-                  key={cat}
-                  type="button"
-                  onClick={() => { setCategory(cat); setIsDirty(true) }}
-                  style={{
-                    padding:    '6px 12px',
-                    borderRadius: 20,
-                    fontSize:   13,
-                    cursor:     'pointer',
-                    fontWeight: isSelected ? 600 : 400,
-                    border:     isSelected ? '2px solid var(--action)' : '1px solid var(--border)',
-                    background: isSelected ? 'var(--action)' : 'transparent',
-                    color:      isSelected ? 'var(--text-on-primary)' : 'var(--text)',
-                  }}
-                >
-                  {cat}
-                </button>
-              )
-            })}
-          </div>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input
-              type="text"
-              placeholder="Outra categoria…"
-              value={(ARTICLE_CATEGORIES as readonly string[]).includes(category) ? '' : category}
-              onChange={e => { setCategory(e.target.value); setIsDirty(true) }}
-              style={{ ...inputStyle, flex: 1, height: 36, fontSize: 13 }}
-            />
-            {category && (
-              <button
-                type="button"
-                onClick={() => { setCategory(''); setIsDirty(true) }}
-                style={{ height: 36, padding: '0 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-subtle)', fontSize: 12, cursor: 'pointer' }}
-              >
-                Limpar
-              </button>
-            )}
-          </div>
-        </div>
+        {/* Categoria — chips em scroll horizontal (mesmo pattern dos
+            filtros da lista: familiar, compacto, mobile-first). Custom
+            categoria é um toggle discreto que só aparece quando preciso —
+            no caso normal, o parser já preencheu uma categoria standard
+            e o chef apenas confirma com um tap. */}
+        <CategoryField
+          value={category}
+          onChange={(v) => { setCategory(v); setIsDirty(true) }}
+        />
 
         {/* Unidade — segmented sempre visível. hideUnitBlock continua a
             esconder em criação se o parser já detetou peso/volume explícito,
@@ -572,10 +560,8 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             artigo se conta à unidade (un) e é necessário para fichas
             técnicas em gramas. */}
         <div>
-          <p style={{ fontSize: 11, color: 'var(--text-on-primary-subtle)', letterSpacing: '0.08em', marginBottom: 8 }}>
-            STOCK
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <h4 style={sectionHeaderStyle}>STOCK</h4>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {/* Stock mínimo — input na unidade do chef (caixa, frasco,
                 garrafão); par_level continua guardado em base_unit. Fonte
                 de unidade: link preferred → qualquer link válido → seed
@@ -607,7 +593,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                 {parUseOrderUnit && (parseFloat(parLevel) || 0) > 0 && (
                   <span style={{
                     fontSize:   12,
-                    color:      'var(--text-on-primary-subtle)',
+                    color:      'var(--text-subtle)',
                     fontFamily: 'JetBrains Mono, monospace',
                     flexShrink: 0,
                   }}>
@@ -615,7 +601,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                   </span>
                 )}
               </div>
-              <p style={{ fontSize: 10, color: 'var(--text-on-primary-subtle)', marginTop: 3 }}>
+              <p style={{ fontSize: 10, color: 'var(--text-subtle)', marginTop: 3 }}>
                 Quando o stock baixar deste valor, o Zesto sugere encomenda.
               </p>
             </div>
@@ -642,7 +628,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                     {hasValue && (
                       <span style={{
                         fontSize:    12,
-                        color:       outOfRange ? 'var(--warning)' : 'var(--text-on-primary-subtle)',
+                        color:       outOfRange ? 'var(--warning)' : 'var(--text-subtle)',
                         fontFamily:  'JetBrains Mono, monospace',
                         flexShrink:  0,
                       }}>
@@ -656,7 +642,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                     </p>
                   )}
                   {!gPerUnit && (
-                    <p style={{ fontSize: 10, color: 'var(--text-on-primary-subtle)', marginTop: 3, marginBottom: 0 }}>
+                    <p style={{ fontSize: 10, color: 'var(--text-subtle)', marginTop: 3, marginBottom: 0 }}>
                       Necessário para usar gramas nas fichas técnicas (ex: 150g ovos).
                     </p>
                   )}
@@ -668,10 +654,8 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
 
         {/* Supplier links */}
         <div>
-          <p style={{ fontSize: 11, color: 'var(--text-on-primary-subtle)', letterSpacing: '0.08em', marginBottom: 8 }}>
-            FORNECEDORES
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <h4 style={sectionHeaderStyle}>FORNECEDORES</h4>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {links.map(link => {
               // Aviso de inconsistência: mesmo order_unit, conversion_factor diferente
               const currentFactor = parseFloat(link.conversion_factor)
@@ -898,7 +882,18 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
               }
               setIsDirty(true)
             }}
-            style={{ width: '100%', height: 44, marginTop: 8, borderRadius: 8, border: `1px dashed var(--border-on-primary-medium)`, background: 'transparent', color: 'var(--text-on-primary-muted)', fontSize: 13, cursor: 'pointer' }}
+            style={{
+              width:        '100%',
+              height:       44,
+              marginTop:    10,
+              borderRadius: 8,
+              border:       '1px dashed var(--border)',
+              background:   'var(--surface)',
+              color:        'var(--text-muted)',
+              fontSize:     13,
+              fontWeight:   500,
+              cursor:       'pointer',
+            }}
           >
             + Adicionar Fornecedor
           </button>
@@ -908,7 +903,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             é uma única acção destrutiva. Promovemos a secção quando houver
             mais (eliminar, exportar, etc.). */}
         {isEdit && (
-          <div style={{ paddingTop: 16, borderTop: `1px solid var(--border-on-primary-soft)` }}>
+          <div style={{ paddingTop: 16, borderTop: `1px solid var(--border)` }}>
             <button
               onClick={handleToggleActive}
               disabled={saving}
@@ -934,7 +929,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
         )}
 
         {error && (
-          <div style={{ background: 'var(--error-surface)', border: `1px solid var(--error-border)`, borderRadius: 8, padding: '10px 14px', color: 'var(--error-on-primary)', fontSize: 13 }}>
+          <div style={{ background: 'var(--error-surface)', border: `1px solid var(--error-border)`, borderRadius: 8, padding: '10px 14px', color: 'var(--error)', fontSize: 13 }}>
             {error}
           </div>
         )}
@@ -942,15 +937,140 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
 
       {/* Footer — só Guardar. O voltar/cancelar já está claro no header
           (chevron ←); duplicar no rodapé era ruído. */}
-      <div style={{ paddingTop: 16, borderTop: `1px solid var(--border-on-primary-soft)`, marginTop: 16, flexShrink: 0 }}>
+      <div style={{
+        padding:    '12px 24px 20px',
+        borderTop:  '1px solid var(--border)',
+        background: 'var(--bg)',
+        flexShrink: 0,
+      }}>
         <button
           onClick={handleSave}
           disabled={saving}
-          style={{ width: '100%', height: 48, borderRadius: 10, border: 'none', background: 'var(--action)', color: 'var(--text-on-primary)', fontSize: 15, fontWeight: 600, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1 }}
+          style={{
+            width:         '100%',
+            height:        52,
+            borderRadius:  10,
+            border:        'none',
+            background:    'var(--action)',
+            color:         'var(--text-on-primary)',
+            fontSize:      15,
+            fontWeight:    600,
+            letterSpacing: '0.01em',
+            cursor:        saving ? 'default' : 'pointer',
+            opacity:       saving ? 0.7 : 1,
+            transition:    'background 0.15s, opacity 0.15s',
+            boxShadow:     saving ? 'none' : '0 1px 0 rgba(168, 88, 34, 0.5)',
+          }}
         >
           {saving ? 'A guardar…' : isEdit ? 'Guardar Alterações' : 'Guardar Artigo'}
         </button>
       </div>
+    </div>
+  )
+}
+
+// ── CategoryField ────────────────────────────────────────────────────────────
+// Chips em scroll horizontal + chip "+ outra" que reveala input para
+// categoria custom. Mantém pattern visual consistente com o filtro da
+// lista de Artigos e Inventário (chips redondos, scroll horizontal).
+
+function CategoryField({
+  value,
+  onChange,
+}: {
+  value:    string
+  onChange: (next: string) => void
+}) {
+  const isStandard = (ARTICLE_CATEGORIES as readonly string[]).includes(value)
+  const [showCustom, setShowCustom] = useState(!!value && !isStandard)
+
+  return (
+    <div>
+      <label style={labelStyle}>CATEGORIA</label>
+      <div
+        role="tablist"
+        aria-label="Escolher categoria"
+        style={{
+          display:                 'flex',
+          gap:                     6,
+          overflowX:               'auto',
+          overflowY:               'hidden',
+          margin:                  '0 -20px',
+          padding:                 '0 20px 4px',
+          scrollbarWidth:          'none',
+          WebkitOverflowScrolling: 'touch',
+        }}
+      >
+        {ARTICLE_CATEGORIES.map(cat => {
+          const isSelected = value === cat
+          return (
+            <button
+              key={cat}
+              type="button"
+              role="tab"
+              aria-selected={isSelected}
+              onClick={() => { onChange(cat); setShowCustom(false) }}
+              style={{
+                flexShrink:   0,
+                minHeight:    'var(--touch-min)',
+                padding:      '0 14px',
+                borderRadius: 22,
+                border:       `1px solid ${isSelected ? 'var(--action)' : 'var(--border)'}`,
+                background:   isSelected ? 'var(--action)' : 'var(--surface)',
+                color:        isSelected ? 'var(--text-on-primary)' : 'var(--text-muted)',
+                fontSize:     13,
+                fontWeight:   isSelected ? 600 : 500,
+                whiteSpace:   'nowrap',
+                cursor:       'pointer',
+                touchAction:  'manipulation',
+              }}
+            >
+              {cat}
+            </button>
+          )
+        })}
+        <button
+          type="button"
+          onClick={() => { setShowCustom(true); if (isStandard) onChange('') }}
+          style={{
+            flexShrink:   0,
+            minHeight:    'var(--touch-min)',
+            padding:      '0 14px',
+            borderRadius: 22,
+            border:       `1px dashed var(--border)`,
+            background:   showCustom && !isStandard ? 'var(--action-surface)' : 'transparent',
+            color:        showCustom && !isStandard ? 'var(--action)' : 'var(--text-subtle)',
+            fontSize:     13,
+            fontWeight:   500,
+            whiteSpace:   'nowrap',
+            cursor:       'pointer',
+            touchAction:  'manipulation',
+          }}
+        >
+          + outra
+        </button>
+      </div>
+      {showCustom && (
+        <input
+          type="text"
+          placeholder="Categoria personalizada…"
+          value={isStandard ? '' : value}
+          onChange={e => onChange(e.target.value)}
+          autoFocus
+          style={{
+            marginTop:    8,
+            width:        '100%',
+            height:       40,
+            background:   'var(--surface)',
+            border:       '1px solid var(--border)',
+            borderRadius: 8,
+            padding:      '0 12px',
+            color:        'var(--text)',
+            fontSize:     14,
+            outline:      'none',
+          }}
+        />
+      )}
     </div>
   )
 }

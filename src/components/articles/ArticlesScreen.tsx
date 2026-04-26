@@ -321,9 +321,12 @@ export default function ArticlesScreen() {
   )
 
   // ── Right panel ────────────────────────────────────────────────────────────
+  // Detalhe partilha o tom cremoso da lista — continuação visual do mesmo
+  // fluxo, não um overlay. BulkImportPanel mantém fundo --primary (--primary
+  // por design — é overlay cheio sobre lista, não master-detail).
   const rightPanel = (
     <div style={{
-      background:     mode === 'bulk-import' ? 'var(--primary)' : 'var(--primary)',
+      background:     mode === 'bulk-import' ? 'var(--primary)' : 'var(--bg)',
       display:        'flex',
       flexDirection:  'column',
       height:         '100%',
@@ -349,7 +352,7 @@ export default function ArticlesScreen() {
       )}
       {mode === 'idle' && (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <p style={{ color: 'var(--text-on-primary-faint)', fontSize: 14 }}>Seleciona ou cria um artigo</p>
+          <p style={{ color: 'var(--text-subtle)', fontSize: 14 }}>Seleciona ou cria um artigo</p>
         </div>
       )}
     </div>
