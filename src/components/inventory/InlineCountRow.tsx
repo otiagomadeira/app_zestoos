@@ -203,7 +203,7 @@ export default function InlineCountRow({
             justifyContent: 'center',
           }}
         >−</button>
-        <div style={{ position: 'relative', width: 64, height: 44, flexShrink: 0 }}>
+        <div style={{ position: 'relative', width: 44, height: 44, flexShrink: 0 }}>
           <input
             type="text"
             inputMode="decimal"
@@ -224,10 +224,10 @@ export default function InlineCountRow({
               borderRadius: 8,
               color:        'var(--text)',
               fontFamily:   'var(--font-mono), monospace',
-              fontSize:     17,
+              fontSize:     15,
               fontWeight:   700,
               textAlign:    'center',
-              padding:      '0 6px',
+              padding:      '0 3px',
               outline:      'none',
               opacity:      controlsDisabled ? 0.5 : 1,
               boxSizing:    'border-box',
@@ -245,7 +245,7 @@ export default function InlineCountRow({
                 pointerEvents:  'none',
                 color:          'var(--text-subtle)',
                 fontFamily:     'var(--font-mono), monospace',
-                fontSize:       16,
+                fontSize:       14,
                 fontWeight:     500,
               }}
             >
