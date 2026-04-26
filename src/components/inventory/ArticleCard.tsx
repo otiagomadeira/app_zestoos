@@ -65,6 +65,18 @@ export default function ArticleCard({
     )
   }
 
+  // role="button" em <div> em vez de <button> nativo. iOS Safari aplica UA
+  // styles ao <button> que ignoram min-height quando o conteúdo é flex+wrap
+  // — resultado visível: cards multi colapsavam para ~24px (linha fina).
+  // O <div> aceita display:flex sem reservas e o role+tabIndex+keydown
+  // recriam o comportamento de teclado do <button>.
+  const handleHeaderKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      handleHeaderClick()
+    }
+  }
+
   return (
     <div
       style={{
@@ -76,25 +88,13 @@ export default function ArticleCard({
         transition:   'border-color 0.15s, background 0.15s',
       }}
     >
-      {/* Wrapper div com flex em vez de o button ser ele próprio o flex container.
-          iOS Safari não respeita `min-height` em <button> com `display:flex`
-          quando há filhos block-level — colapsa para altura do baseline e o
-          card aparece como linha fina (~24px). Mover o flex para um <span>
-          interno e manter o <button> como wrapper "block" resolve o bug. */}
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
         onClick={handleHeaderClick}
+        onKeyDown={handleHeaderKeyDown}
         style={{
-          display:    'block',
-          width:      '100%',
-          background: 'transparent',
-          border:     'none',
-          padding:    0,
-          cursor:     'pointer',
-          textAlign:  'left',
-        }}
-      >
-        <span style={{
           display:     'flex',
           alignItems:  'center',
           gap:         10,
@@ -102,67 +102,69 @@ export default function ArticleCard({
           padding:     '8px 12px',
           width:       '100%',
           boxSizing:   'border-box',
-        }}>
-          <span style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{
-              fontSize:     15,
-              fontWeight:   600,
-              color:        'var(--text)',
-              whiteSpace:   'nowrap',
-              overflow:     'hidden',
-              textOverflow: 'ellipsis',
-              flexShrink:   1,
-              minWidth:     0,
-            }}>
-              {article.name}
-            </span>
-            {isMulti && (
-              <span
-                aria-label="Multi-embalagem"
-                style={{
-                  fontSize:      9,
-                  fontWeight:    700,
-                  letterSpacing: 0.5,
-                  color:         'var(--action)',
-                  background:    'var(--bg)',
-                  border:        '1px solid var(--action)',
-                  borderRadius:  4,
-                  padding:       '1px 5px',
-                  flexShrink:    0,
-                }}
-              >
-                MULTI
-              </span>
-            )}
-          </span>
-          {/* Chip: valor só quando contado nesta sessão; senão "—". Mesma regra
-              do inline — current_qty da DB nunca alimenta o display directamente. */}
+          cursor:      'pointer',
+          touchAction: 'manipulation',
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{
-            background:   'var(--surface-2)',
-            color:        isCounted ? 'var(--text)' : 'var(--text-subtle)',
-            border:       '1px solid var(--border)',
-            borderRadius: 8,
-            padding:      '4px 10px',
-            fontFamily:   'var(--font-mono), monospace',
             fontSize:     15,
-            fontWeight:   700,
-            lineHeight:   1.2,
-            flexShrink:   0,
+            fontWeight:   600,
+            color:        'var(--text)',
+            whiteSpace:   'nowrap',
+            overflow:     'hidden',
+            textOverflow: 'ellipsis',
+            flexShrink:   1,
+            minWidth:     0,
           }}>
-            {isCounted ? formatBaseQty(article.current_qty, article.unit) : '—'}
+            {article.name}
           </span>
-          {/* Chevron sinaliza que o card multi expande. ▴ quando aberto, ▾ fechado. */}
-          <span aria-hidden="true" style={{
-            fontSize:    11,
-            color:       'var(--text-muted)',
-            flexShrink:  0,
-            marginLeft:  -2,
-            lineHeight:  1,
-            transition:  'transform 0.15s',
-            transform:   isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-          }}>▾</span>
+          {isMulti && (
+            <span
+              aria-label="Multi-embalagem"
+              style={{
+                fontSize:      9,
+                fontWeight:    700,
+                letterSpacing: 0.5,
+                color:         'var(--action)',
+                background:    'var(--bg)',
+                border:        '1px solid var(--action)',
+                borderRadius:  4,
+                padding:       '1px 5px',
+                flexShrink:    0,
+              }}
+            >
+              MULTI
+            </span>
+          )}
+        </div>
+        {/* Chip: valor só quando contado nesta sessão; senão "—". Mesma regra
+            do inline — current_qty da DB nunca alimenta o display directamente. */}
+        <span style={{
+          background:   'var(--surface-2)',
+          color:        isCounted ? 'var(--text)' : 'var(--text-subtle)',
+          border:       '1px solid var(--border)',
+          borderRadius: 8,
+          padding:      '4px 10px',
+          fontFamily:   'var(--font-mono), monospace',
+          fontSize:     15,
+          fontWeight:   700,
+          lineHeight:   1.2,
+          flexShrink:   0,
+        }}>
+          {isCounted ? formatBaseQty(article.current_qty, article.unit) : '—'}
         </span>
-      </button>
+        {/* Chevron sinaliza que o card multi expande. ▴ quando aberto, ▾ fechado. */}
+        <span aria-hidden="true" style={{
+          fontSize:    11,
+          color:       'var(--text-muted)',
+          flexShrink:  0,
+          marginLeft:  -2,
+          lineHeight:  1,
+          transition:  'transform 0.15s',
+          transform:   isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+        }}>▾</span>
+      </div>
 
       {isExpanded && (
         <ExpandedBody
