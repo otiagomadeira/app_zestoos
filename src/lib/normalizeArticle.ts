@@ -89,6 +89,12 @@ const UNIT_QTY_TOKENS = new Set([
   'un',
 ])
 
+// Tokens compactos "<n>un|uni|unid|unidade(s)" — ex: "6un", "12uni", "6unidades".
+// classifyLine não os apanha (não são peso/volume nem bare number puro) e o
+// filter !UNIT_QTY_TOKENS / !isBareNumber também não, porque misturam dígitos
+// e letras. Este RE fecha o buraco — não match em "20x30" (tem 'x').
+const COMPACT_UNIT_QTY_RE = /^\d+\.?\d*(un|uni|unis|unid|unids|unidade|unidades)$/i
+
 // Strip da palavra em `idx` + conectores adjacentes em ambos os lados
 function stripLabelAndConnectors(words: string[], idx: number): string[] {
   let start = idx
@@ -191,6 +197,7 @@ export function extractName(line: string, cl: ClassifiedLine): string {
   cleaned = cleaned
     .filter(w => !UNIT_QTY_TOKENS.has(w.toLowerCase()))
     .filter(w => !isBareNumber(w))
+    .filter(w => !COMPACT_UNIT_QTY_RE.test(w))
   return cleaned.length > 0 ? cleaned.join(' ') : line
 }
 
@@ -258,13 +265,18 @@ export function normalizeArticleInput(
 
   // Override: token explícito "uni"/"unidade(s)" no input → forçar unit='un'.
   // Resolve "Alface iceberg caixa 12 uni" (caía em fallback 'g') e "Manjericão vaso 1 uni".
+  // Apanha também forma compacta "<n>un|uni|unidade(s)" (ex.: "Cebola 12un",
+  // "Pão de leite 6un") — sem isto a unit caía no fallback do produto (g/mL).
   // Excepção: se peso/volume foi detectado primeiro, o "uni" é o count de
   // multipack-equivalente (ex.: "1lt caixa 6 uni leite m.g.") — base_unit
   // permanece g/mL.
   if (
     cl.type !== 'weight' &&
     cl.type !== 'volume' &&
-    /\b(uni|unis|unid|unids|unidade|unidades)\b/i.test(trimmed) &&
+    (
+      /\b(uni|unis|unid|unids|unidade|unidades)\b/i.test(trimmed) ||
+      /\b\d+\.?\d*(un|uni|unis|unid|unids|unidade|unidades)\b/i.test(trimmed)
+    ) &&
     unit !== 'un'
   ) {
     unit = 'un'

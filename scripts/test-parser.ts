@@ -126,6 +126,22 @@ const CASES: Case[] = [
               orderUnit: 'caixa', conversionFactor: 6000,
               multipackCount: 6, multipackPerPack: 1000, hint: '6 x 1 L · caixa' } },
 
+  // ── Tokens compactos "<n>un" (sem espaço) ───────────────────────────
+  // O parser perdia "Abacate 6un" porque "6un" não é peso, volume nem bare
+  // number, e os filtros de UNIT_QTY_TOKENS/isBareNumber não apanhavam um
+  // token misto. COMPACT_UNIT_QTY_RE fecha o buraco sem afetar dimensões
+  // como "20x30" (têm 'x').
+  { tag: 'CRITICAL', input: 'Abacate 6un',
+    expect: { name: 'Abacate', unit: 'un', category: 'Frutas e Legumes' } },
+  { tag: 'CRITICAL', input: 'Cebola 12un',
+    expect: { name: 'Cebola', unit: 'un', category: 'Frutas e Legumes' } },
+  { tag: 'CRITICAL', input: 'Ovos 6uni',
+    expect: { name: 'Ovos', unit: 'un', category: 'Lacticínios e Ovos' } },
+  { tag: 'CRITICAL', input: 'Pão de leite 6un',
+    expect: { name: 'Pão de Leite', unit: 'un' } },
+  { tag: 'CRITICAL', input: 'Maçã 6unidades',
+    expect: { name: 'Maçã', unit: 'un', category: 'Frutas e Legumes' } },
+
   // ── Fase B: multipack-equivalente "qty unit + label + count uni" ───
   // Padrão: weight/volume + label adjacente DEPOIS + N uni no resto
   // → trata como multipack {count:N, perPack:qty}.
