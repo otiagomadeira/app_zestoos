@@ -79,3 +79,32 @@ export async function recordStockCountInline(
   if (movementId) invalidateCache('current_stock', 'order_suggestions')
   return { saved: true, movementId }
 }
+
+// Autosave multi-embalagem (Fase C2). Espelho de recordStockCountInline para
+// artigos com múltiplas embalagens.
+//
+// Idempotente por (article_id, count_session_id) sobre o mesmo UNIQUE INDEX
+// partilhado com o inline (017). Cada chamada faz UPDATE in-place do
+// movement existente da sessão (e DELETE/INSERT das stock_count_lines).
+//
+// "saved" é sempre true quando não há erro. movementId pode ser null no caso
+// no-op (todas as linhas a zero e sem movement anterior).
+export async function recordStockCountMultiInline(
+  articleId: string,
+  lines:     CountLine[],
+  sessionId: string,
+): Promise<{ saved: boolean; movementId: string | null }> {
+  const { data, error } = await supabase.rpc('record_stock_count_multi_inline', {
+    p_article_id: articleId,
+    p_lines:      lines.map(l => ({
+      label:         l.label,
+      qty:           l.qty,
+      base_per_unit: l.base_per_unit,
+    })),
+    p_session_id: sessionId,
+  })
+  if (error) throw error
+  const movementId = (data as string | null) ?? null
+  if (movementId) invalidateCache('current_stock', 'order_suggestions')
+  return { saved: true, movementId }
+}

@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import type { CurrentStock } from '@/types/database'
 import { fetchCurrentStock } from '@/lib/supabase'
-import { fetchPackagings, recordStockCount, type Packaging, type CountLine } from '@/lib/stockCount'
+import { fetchPackagings, type Packaging } from '@/lib/stockCount'
 import { useCurrentOrgId } from '@/hooks/useCurrentOrgId'
 import { useInventorySession } from '@/hooks/useInventorySession'
 import { ARTICLE_CATEGORIES, normalizeCanonicalCategory } from '@/lib/categoryKeywords'
@@ -15,9 +15,6 @@ export default function InventoryScreen() {
   const [error,       setError]       = useState<string | null>(null)
   const [selectedId,  setSelectedId]  = useState<string | null>(null)
   const [packagings,  setPackagings]  = useState<Packaging[] | null>(null)
-  const [savingId,    setSavingId]    = useState<string | null>(null)
-  // Guard síncrono contra double-tap em Guardar (multi-embalagem).
-  const submitInFlight = useRef(false)
 
   const orgId = useCurrentOrgId()
   const {
@@ -28,7 +25,6 @@ export default function InventoryScreen() {
 
   const [selectedCategory,    setSelectedCategory]    = useState<string | null>(null)
   const [selectedCountStatus, setSelectedCountStatus] = useState<'uncounted' | 'counted' | 'all'>('all')
-  const [saveNoChange,        setSaveNoChange]        = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -85,46 +81,15 @@ export default function InventoryScreen() {
     return pool.slice().sort(byName)
   }, [articles, selectedCategory, selectedCountStatus, countedThisSession])
 
-  const selectedArticle = useMemo(
-    () => articles.find(a => a.article_id === selectedId) ?? null,
-    [articles, selectedId],
-  )
-
   const handleToggle = useCallback((id: string) => {
     setSelectedId(prev => prev === id ? null : id)
   }, [])
 
-  const handleSave = useCallback(async (lines: CountLine[]) => {
-    if (submitInFlight.current) return
-    if (!selectedArticle) return
-
-    const articleId = selectedArticle.article_id
-    submitInFlight.current = true
-    setSavingId(articleId)
-    try {
-      const result = await recordStockCount(articleId, lines)
-      if (result.saved) {
-        await load()
-        addCounted(articleId)
-        setSelectedId(null)
-      } else {
-        setSaveNoChange(articleId)
-        setTimeout(() => setSaveNoChange(null), 1500)
-        setSelectedId(null)
-      }
-    } catch (e: unknown) {
-      setError((e as Error).message ?? 'Erro ao guardar')
-    } finally {
-      setSavingId(null)
-      submitInFlight.current = false
-    }
-  }, [selectedArticle, load, addCounted])
-
-  // Callback do InlineCountRow após autosave OK. Apenas marca como contado;
-  // não recarrega (manter o card no mesmo sítio durante a sessão). O hook
-  // mantém o valor escrito em state interno; current_qty da DB já foi
-  // actualizado pelo autosave para a próxima sessão/refresh.
-  const handleInlineCounted = useCallback((articleId: string) => {
+  // Callback partilhado pelo inline e multi após autosave OK. Apenas marca
+  // como contado; não recarrega — manter o card no mesmo sítio durante a
+  // sessão. Os hooks de autosave guardam o valor escrito em state interno;
+  // o current_qty da DB foi actualizado pelo RPC para próximas sessões.
+  const handleCounted = useCallback((articleId: string) => {
     addCounted(articleId)
   }, [addCounted])
 
@@ -236,35 +201,16 @@ export default function InventoryScreen() {
         {displayed.map(article => {
           const id = article.article_id
           return (
-            <div key={id}>
-              {saveNoChange === id && (
-                <div style={{
-                  background:   'var(--surface)',
-                  border:       '1px solid var(--border)',
-                  borderRadius: 8,
-                  padding:      '8px 14px',
-                  color:        'var(--text-subtle)',
-                  fontSize:     13,
-                  fontWeight:   500,
-                  textAlign:    'center',
-                  marginBottom: 4,
-                }}>
-                  Sem alteração — valor igual ao actual
-                </div>
-              )}
-              <ArticleCard
-                key={`${id}:${sessionId ?? 'pending'}`}
-                article={article}
-                isExpanded={selectedId === id}
-                packagings={selectedId === id ? packagings : null}
-                isCounted={countedThisSession.has(id)}
-                isSaving={savingId === id}
-                sessionId={sessionId}
-                onToggle={() => handleToggle(id)}
-                onSave={handleSave}
-                onCounted={handleInlineCounted}
-              />
-            </div>
+            <ArticleCard
+              key={`${id}:${sessionId ?? 'pending'}`}
+              article={article}
+              isExpanded={selectedId === id}
+              packagings={selectedId === id ? packagings : null}
+              isCounted={countedThisSession.has(id)}
+              sessionId={sessionId}
+              onToggle={() => handleToggle(id)}
+              onCounted={handleCounted}
+            />
           )
         })}
       </div>

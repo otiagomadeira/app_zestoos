@@ -1,11 +1,15 @@
 'use client'
 
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import type { CurrentStock } from '@/types/database'
-import type { Packaging, CountLine } from '@/lib/stockCount'
+import type { Packaging } from '@/lib/stockCount'
 import { packagingKey } from '@/lib/stockCount'
 import { formatBaseQty } from '@/lib/units'
 import { formatPackagingLabel } from '@/lib/inventory/formatPackagingLabel'
+import {
+  useMultiPackagingAutosave,
+  type MultiAutosaveStatus,
+} from '@/lib/inventory/useMultiPackagingAutosave'
 import PackagingLine from './PackagingLine'
 import InlineCountRow from './InlineCountRow'
 
@@ -13,28 +17,19 @@ interface ArticleCardProps {
   article:    CurrentStock
   isExpanded: boolean
   packagings: Packaging[] | null
-  isSaving:   boolean
   isCounted:  boolean
   sessionId:  string | null
   onToggle:   () => void
-  onSave:     (lines: CountLine[]) => void
   onCounted:  (articleId: string) => void
-}
-
-function parseQty(raw: string): number {
-  const n = parseFloat(raw.replace(',', '.'))
-  return isNaN(n) ? NaN : n
 }
 
 export default function ArticleCard({
   article,
   isExpanded,
   packagings,
-  isSaving,
   isCounted,
   sessionId,
   onToggle,
-  onSave,
   onCounted,
 }: ArticleCardProps) {
   const isSimpleInline =
@@ -44,11 +39,13 @@ export default function ArticleCard({
 
   const isMulti = (packagings?.length ?? 0) > 1
 
-  const hasUnsavedRef = useRef(false)
+  // Ref que aponta para a flush() do hook do ExpandedBody. Permite ao
+  // header forçar save antes de colapsar (fire-and-forget).
+  const flushPendingRef = useRef<(() => Promise<void>) | null>(null)
 
   const handleHeaderClick = useCallback(() => {
-    if (isExpanded && hasUnsavedRef.current) {
-      if (typeof window !== 'undefined' && !window.confirm('Descartar contagem?')) return
+    if (isExpanded && flushPendingRef.current) {
+      void flushPendingRef.current()
     }
     onToggle()
   }, [isExpanded, onToggle])
@@ -78,13 +75,12 @@ export default function ArticleCard({
       <button
         type="button"
         onClick={handleHeaderClick}
-        disabled={isSaving}
         style={{
           width:       '100%',
           background:  'transparent',
           border:      'none',
           padding:     '8px 12px',
-          cursor:      isSaving ? 'default' : 'pointer',
+          cursor:      'pointer',
           textAlign:   'left',
           display:     'flex',
           alignItems:  'center',
@@ -123,16 +119,12 @@ export default function ArticleCard({
               MULTI
             </span>
           )}
-          {isCounted && (
-            <span style={{ fontSize: 13, color: 'var(--success)', fontWeight: 700, flexShrink: 0 }}>✓</span>
-          )}
-          {isSaving && (
-            <span style={{ fontSize: 12, color: 'var(--text-subtle)', flexShrink: 0 }}>…</span>
-          )}
         </div>
+        {/* Chip: valor só quando contado nesta sessão; senão "—". Mesma regra
+            do inline — current_qty da DB nunca alimenta o display directamente. */}
         <span style={{
           background:   'var(--surface-2)',
-          color:        'var(--text)',
+          color:        isCounted ? 'var(--text)' : 'var(--text-subtle)',
           border:       '1px solid var(--border)',
           borderRadius: 8,
           padding:      '4px 10px',
@@ -142,18 +134,18 @@ export default function ArticleCard({
           lineHeight:   1.2,
           flexShrink:   0,
         }}>
-          {formatBaseQty(article.current_qty, article.unit)}
+          {isCounted ? formatBaseQty(article.current_qty, article.unit) : '—'}
         </span>
       </button>
 
       {isExpanded && (
         <ExpandedBody
+          articleId={article.article_id}
           packagings={packagings}
           baseUnit={article.unit}
-          currentQty={article.current_qty}
-          isSaving={isSaving}
-          hasUnsavedRef={hasUnsavedRef}
-          onSave={onSave}
+          sessionId={sessionId}
+          flushPendingRef={flushPendingRef}
+          onCounted={onCounted}
         />
       )}
     </div>
@@ -161,25 +153,33 @@ export default function ArticleCard({
 }
 
 interface ExpandedBodyProps {
-  packagings:    Packaging[] | null
-  baseUnit:      string
-  currentQty:    number
-  isSaving:      boolean
-  hasUnsavedRef: React.RefObject<boolean>
-  onSave:        (lines: CountLine[]) => void
+  articleId:       string
+  packagings:      Packaging[] | null
+  baseUnit:        string
+  sessionId:       string | null
+  flushPendingRef: React.RefObject<(() => Promise<void>) | null>
+  onCounted:       (articleId: string) => void
 }
 
+/**
+ * Corpo expandido do card multi. Cada linha tem o seu próprio input mas o
+ * autosave é colectivo: 1.5s de debounce sobre todas as qtys → uma única
+ * call a record_stock_count_multi_inline (idempotente por session_id).
+ *
+ * Sem botão Guardar, sem "Total 0 g" quando vazio. Status icon no canto
+ * superior direito (… ✓ !).
+ */
 function ExpandedBody({
+  articleId,
   packagings,
   baseUnit,
-  currentQty,
-  isSaving,
-  hasUnsavedRef,
-  onSave,
+  sessionId,
+  flushPendingRef,
+  onCounted,
 }: ExpandedBodyProps) {
-  const [qtys, setQtys] = useState<Record<string, string>>({})
   const bodyRef = useRef<HTMLDivElement>(null)
 
+  // Scroll into view ao abrir.
   useEffect(() => {
     const t = setTimeout(() => {
       bodyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
@@ -187,57 +187,34 @@ function ExpandedBody({
     return () => clearTimeout(t)
   }, [])
 
+  // Estável: onSaved invoca onCounted.
+  const onSavedRef = useRef<() => void>(() => onCounted(articleId))
   useEffect(() => {
-    hasUnsavedRef.current = Object.values(qtys).some(v => parseQty(v) > 0)
-    return () => { hasUnsavedRef.current = false }
-  }, [qtys, hasUnsavedRef])
+    onSavedRef.current = () => onCounted(articleId)
+  }, [onCounted, articleId])
 
-  const total = useMemo(() => {
-    if (!packagings) return 0
-    return packagings.reduce((sum, p) => {
-      const n = parseQty(qtys[packagingKey(p)] ?? '')
-      if (isNaN(n) || n <= 0) return sum
-      return sum + n * p.base_per_unit
-    }, 0)
-  }, [packagings, qtys])
+  const {
+    qtys, status, error,
+    setQty, step, flush, retry,
+    total, hasAny,
+  } = useMultiPackagingAutosave({
+    articleId,
+    sessionId,
+    packagings,
+    onSaved: () => onSavedRef.current(),
+  })
+
+  // Expõe flush() ao parent para fire-and-forget no collapse.
+  useEffect(() => {
+    flushPendingRef.current = flush
+    return () => { flushPendingRef.current = null }
+  }, [flush, flushPendingRef])
+
+  const handleStatusActivate = useCallback(() => {
+    if (status === 'error') void retry()
+  }, [status, retry])
 
   const isSimple = packagings !== null && packagings.length === 1
-
-  const saveDisabled = isSaving || (total === 0 && currentQty === 0)
-
-  const handleSave = useCallback(() => {
-    if (!packagings) return
-    const lines: CountLine[] = packagings
-      .map(p => {
-        const n = parseQty(qtys[packagingKey(p)] ?? '')
-        return { label: p.label, qty: isNaN(n) ? 0 : n, base_per_unit: p.base_per_unit }
-      })
-      .filter(l => l.qty > 0)
-
-    if (lines.length === 0) {
-      if (currentQty > 0) {
-        if (typeof window === 'undefined' || !window.confirm('Esgotaste este artigo? O stock vai a 0.')) return
-        onSave([{ label: 'esgotado', qty: 0, base_per_unit: 1 }])
-      }
-      return
-    }
-    onSave(lines)
-  }, [packagings, qtys, currentQty, onSave])
-
-  const setQty = useCallback((key: string, raw: string) => {
-    setQtys(prev => ({ ...prev, [key]: raw }))
-  }, [])
-
-  const stepQty = useCallback((key: string, delta: number) => {
-    setQtys(prev => {
-      const parsed  = parseFloat((prev[key] ?? '0').replace(',', '.'))
-      const current = isNaN(parsed) ? 0 : parsed
-      const next    = Math.max(0, current + delta)
-      if (next === 0) return { ...prev, [key]: '' }
-      const display = Number.isInteger(next) ? String(next) : String(next).replace('.', ',')
-      return { ...prev, [key]: display }
-    })
-  }, [])
 
   return (
     <div
@@ -251,7 +228,18 @@ function ExpandedBody({
       }}
     >
       {!isSimple && (
-        <div style={{ height: 1, background: 'var(--border)', margin: '4px 2px 4px' }} />
+        <div style={{
+          display:        'flex',
+          alignItems:     'center',
+          justifyContent: 'space-between',
+          height:         24,
+          margin:         '4px 2px 0',
+          borderTop:      '1px solid var(--border)',
+          paddingTop:     8,
+        }}>
+          <span aria-hidden="true" />
+          <BodyStatusIcon status={status} error={error} onActivate={handleStatusActivate} />
+        </div>
       )}
 
       {packagings === null && (
@@ -274,13 +262,13 @@ function ExpandedBody({
             label={label}
             value={value}
             onChange={(raw) => setQty(key, raw)}
-            onStep={(delta) => stepQty(key, delta)}
-            disabled={isSaving}
+            onStep={(delta) => step(key, p.base_per_unit, p.label, delta)}
+            disabled={false}
           />
         )
       })}
 
-      {!isSimple && (
+      {!isSimple && hasAny && (
         <div
           aria-live="polite"
           style={{
@@ -296,35 +284,63 @@ function ExpandedBody({
             fontFamily: 'var(--font-mono), monospace',
             fontSize:   17,
             fontWeight: 700,
-            color:      total > 0 ? 'var(--text)' : 'var(--text-subtle)',
+            color:      'var(--text)',
           }}>
             {formatBaseQty(total, baseUnit)}
           </span>
         </div>
       )}
-
-      <button
-        type="button"
-        onClick={handleSave}
-        disabled={saveDisabled}
-        aria-busy={isSaving}
-        aria-label="Guardar contagem"
-        style={{
-          width:        '100%',
-          minHeight:    48,
-          marginTop:    4,
-          borderRadius: 10,
-          border:       'none',
-          background:   saveDisabled ? 'var(--action-disabled)' : 'var(--action)',
-          color:        'var(--white)',
-          fontSize:     16,
-          fontWeight:   700,
-          cursor:       saveDisabled ? 'not-allowed' : 'pointer',
-          opacity:      saveDisabled && !isSaving ? 0.6 : 1,
-        }}
-      >
-        {isSaving ? '…' : 'Guardar'}
-      </button>
     </div>
   )
+}
+
+interface BodyStatusIconProps {
+  status:     MultiAutosaveStatus
+  error:      string | null
+  onActivate: () => void
+}
+
+function BodyStatusIcon({ status, error, onActivate }: BodyStatusIconProps) {
+  const baseStyle: React.CSSProperties = {
+    display:    'flex',
+    alignItems: 'center',
+    gap:        4,
+    fontSize:   12,
+    fontWeight: 600,
+    lineHeight: 1,
+  }
+  if (status === 'saving' || status === 'dirty') {
+    return (
+      <span aria-label="A guardar" aria-live="polite" style={{ ...baseStyle, color: 'var(--text-subtle)' }}>
+        … A guardar
+      </span>
+    )
+  }
+  if (status === 'saved') {
+    return (
+      <span aria-label="Guardado" aria-live="polite" style={{ ...baseStyle, color: 'var(--success)' }}>
+        ✓ Guardado
+      </span>
+    )
+  }
+  if (status === 'error') {
+    return (
+      <button
+        type="button"
+        onClick={onActivate}
+        aria-label={`Erro a guardar${error ? `: ${error}` : ''}. Toca para tentar de novo.`}
+        style={{
+          ...baseStyle,
+          background:  'transparent',
+          border:      'none',
+          color:       'var(--error)',
+          cursor:      'pointer',
+          touchAction: 'manipulation',
+        }}
+      >
+        ! Erro — toca para tentar
+      </button>
+    )
+  }
+  return <span aria-hidden="true" style={{ ...baseStyle, opacity: 0 }}>placeholder</span>
 }
