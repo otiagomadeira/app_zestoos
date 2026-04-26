@@ -4,27 +4,44 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { Article } from '@/types/database'
 import { fetchAllArticles } from '@/lib/supabase'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { ARTICLE_CATEGORIES, normalizeCanonicalCategory } from '@/lib/categoryKeywords'
+import { searchMatch } from '@/lib/search'
+import FloatingSearch from '@/components/inventory/FloatingSearch'
 import ArticleForm from './ArticleForm'
 import BulkImportPanel from './BulkImportPanel'
-import AliasManagerPanel from './AliasManagerPanel'
 
-type Mode = 'idle' | 'create' | 'edit' | 'bulk-import' | 'aliases'
+// Mode 'aliases' foi retirado intencionalmente desta UI: o gestor
+// (AliasManagerPanel) é aprendizagem interna da Zesto, não fluxo diário do
+// chef. Componente fica em disco para futura reutilização em /definicoes
+// → "Aprendizagem da Zesto". A aprendizagem automática (useOrgAliases em
+// ArticleForm) continua activa — só o gestor visual deixou de ser visível.
+type Mode = 'idle' | 'create' | 'edit' | 'bulk-import'
 
-const normalize = (s: string) =>
-  s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+type StatusFilter = 'active' | 'all' | 'inactive'
+
+const STATUS_LABEL: Record<StatusFilter, string> = {
+  active:   'Ativos',
+  all:      'Todos',
+  inactive: 'Inativos',
+}
 
 export default function ArticlesScreen() {
   const isMobile = useIsMobile()
 
-  const [articles,     setArticles]     = useState<Article[]>([])
-  const [loading,      setLoading]      = useState(true)
-  const [error,        setError]        = useState<string | null>(null)
-  const [search,       setSearch]       = useState('')
-  const [showInactive, setShowInactive] = useState(false)
-  const [mode,         setMode]         = useState<Mode>('idle')
-  const [selected,     setSelected]     = useState<Article | null>(null)
-  const [addMenuOpen,  setAddMenuOpen]  = useState(false)
-  const addMenuRef                       = useRef<HTMLDivElement | null>(null)
+  const [articles,         setArticles]         = useState<Article[]>([])
+  const [loading,          setLoading]          = useState(true)
+  const [error,            setError]            = useState<string | null>(null)
+  const [mode,             setMode]             = useState<Mode>('idle')
+  const [selected,         setSelected]         = useState<Article | null>(null)
+  const [addMenuOpen,      setAddMenuOpen]      = useState(false)
+  const addMenuRef                              = useRef<HTMLDivElement | null>(null)
+
+  // Filtros — espelham o padrão Inventário (chips de categoria + dropdown de
+  // estado + FAB de pesquisa). Default 'active' porque na UI de Artigos o
+  // utilizador quase sempre quer ver só o que está em uso.
+  const [searchQuery,      setSearchQuery]      = useState<string>('')
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
+  const [statusFilter,     setStatusFilter]     = useState<StatusFilter>('active')
 
   useEffect(() => {
     if (!addMenuOpen) return
@@ -58,26 +75,40 @@ export default function ArticlesScreen() {
 
   useEffect(() => { load() }, [load])
 
-  const filtered = useMemo(() => {
-    const q = normalize(search)
-    return articles.filter(a =>
-      (showInactive || a.is_active) && (
-        normalize(a.name).includes(q) ||
-        normalize(a.category ?? '').includes(q)
-      )
-    )
-  }, [articles, search, showInactive])
+  const hasUncategorized = useMemo(
+    () => articles.some(a => normalizeCanonicalCategory(a.category) === null),
+    [articles]
+  )
 
-  // Group by category
-  const grouped = useMemo(() => {
-    const map = new Map<string, Article[]>()
-    for (const a of filtered) {
-      const cat = a.category ?? 'Sem categoria'
-      if (!map.has(cat)) map.set(cat, [])
-      map.get(cat)!.push(a)
+  // Lista exibida — pipeline plano: search → categoria → estado → sort.
+  // Sem agrupamento por categoria (decisão de produto: mais consistente com
+  // Inventário e mais legível em listas longas).
+  const displayed = useMemo(() => {
+    const byName = (a: Article, b: Article) => a.name.localeCompare(b.name, 'pt')
+    let pool = articles
+
+    const q = searchQuery.trim()
+    if (q.length > 0) {
+      pool = pool.filter(a => searchMatch(q, a.name) || searchMatch(q, a.category ?? ''))
     }
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b))
-  }, [filtered])
+
+    if (selectedCategory === '__none__') {
+      pool = pool.filter(a => normalizeCanonicalCategory(a.category) === null)
+    } else if (selectedCategory) {
+      pool = pool.filter(a => normalizeCanonicalCategory(a.category) === selectedCategory)
+    }
+
+    if (statusFilter === 'active')   pool = pool.filter(a =>  a.is_active)
+    if (statusFilter === 'inactive') pool = pool.filter(a => !a.is_active)
+    // 'all' → sem filtro
+
+    return pool.slice().sort(byName)
+  }, [articles, searchQuery, selectedCategory, statusFilter])
+
+  const activeCount = useMemo(
+    () => articles.filter(a => a.is_active).length,
+    [articles]
+  )
 
   const handleSaved = (article: Article) => {
     setArticles(prev => {
@@ -108,174 +139,196 @@ export default function ArticlesScreen() {
     </div>
   )
 
-  // ── List panel (shared between mobile and desktop) ─────────────────────────
+  // ── List panel ─────────────────────────────────────────────────────────────
   const listPanel = (
     <div style={{
       display:       'flex',
       flexDirection: 'column',
-      borderRight:   '1px solid var(--border)',
+      borderRight:   isMobile ? 'none' : '1px solid var(--border)',
       background:    'var(--bg)',
       height:        '100%',
       overflow:      'hidden',
+      position:      'relative',
     }}>
-      <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>Artigos</h2>
-            <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>
-              {articles.filter(a => a.is_active).length} ativos
-            </p>
+      {/* Header — espelha o padrão de Inventário (título+contagem · filtro de
+          estado), com a única diferença de ter o "+ Adicionar" porque é a
+          acção principal desta página. */}
+      <div style={{ padding: '12px 20px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <div style={{
+          display:        'flex',
+          alignItems:     'center',
+          justifyContent: 'space-between',
+          gap:            12,
+          marginBottom:   10,
+          minHeight:      'var(--touch-min)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+            <h2 style={{
+              fontSize: 18, fontWeight: 700, color: 'var(--text)', margin: 0,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              Artigos
+            </h2>
+            <span aria-hidden="true" style={{ fontSize: 14, color: 'var(--text-subtle)' }}>·</span>
+            <span style={{ fontSize: 14, color: 'var(--text-subtle)', fontFamily: 'var(--font-mono), monospace' }}>
+              {activeCount}
+            </span>
           </div>
-          <div ref={addMenuRef} style={{ display: 'flex', gap: 6, position: 'relative' }}>
-            <button
-              onClick={() => setMode('aliases')}
-              title="Aliases aprendidos"
-              style={{ width: 44, height: 44, borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-subtle)', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              ⌘
-            </button>
-            <button
-              onClick={() => setAddMenuOpen(o => !o)}
-              aria-haspopup="menu"
-              aria-expanded={addMenuOpen}
-              style={{ height: 44, padding: '0 14px', borderRadius: 8, border: 'none', background: 'var(--action)', color: 'var(--text-on-primary)', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
-            >
-              + Adicionar
-              <span style={{ fontSize: 10, opacity: 0.7 }}>▾</span>
-            </button>
 
-            {addMenuOpen && (
-              <div
-                role="menu"
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <StatusFilterDropdown value={statusFilter} onChange={setStatusFilter} />
+
+            <div ref={addMenuRef} style={{ position: 'relative' }}>
+              <button
+                type="button"
+                onClick={() => setAddMenuOpen(o => !o)}
+                aria-haspopup="menu"
+                aria-expanded={addMenuOpen}
+                aria-label="Adicionar artigo"
                 style={{
-                  position:     'absolute',
-                  top:          'calc(100% + 6px)',
-                  right:        0,
-                  zIndex:       50,
-                  minWidth:     240,
-                  maxWidth:     'calc(100vw - 32px)',
-                  background:   'var(--surface)',
-                  border:       '1px solid var(--border)',
-                  borderRadius: 10,
-                  boxShadow:    '0 8px 24px rgba(28, 20, 10, 0.12)',
-                  padding:      4,
+                  height:       'var(--touch-min)',
+                  padding:      '0 12px',
+                  borderRadius: 8,
+                  border:       'none',
+                  background:   'var(--action)',
+                  color:        'var(--text-on-primary)',
+                  fontSize:     13,
+                  fontWeight:   600,
+                  cursor:       'pointer',
                   display:      'flex',
-                  flexDirection:'column',
-                  gap:          2,
-                  animation:    'addMenuIn 0.15s ease-out',
+                  alignItems:   'center',
+                  gap:          6,
+                  touchAction:  'manipulation',
+                  whiteSpace:   'nowrap',
                 }}
               >
-                <button
-                  role="menuitem"
-                  onClick={() => { setSelected(null); setMode('create'); setAddMenuOpen(false) }}
-                  style={{ height: 44, padding: '0 12px', textAlign: 'left', borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--text)', fontSize: 14, cursor: 'pointer' }}
+                + Adicionar
+                <span aria-hidden="true" style={{ fontSize: 10, opacity: 0.7 }}>▾</span>
+              </button>
+
+              {addMenuOpen && (
+                <div
+                  role="menu"
+                  style={{
+                    position:      'absolute',
+                    top:           'calc(100% + 6px)',
+                    right:         0,
+                    zIndex:        50,
+                    minWidth:      200,
+                    maxWidth:      'calc(100vw - 32px)',
+                    background:    'var(--surface)',
+                    border:        '1px solid var(--border)',
+                    borderRadius:  10,
+                    boxShadow:     '0 8px 24px var(--border)',
+                    padding:       4,
+                    display:       'flex',
+                    flexDirection: 'column',
+                    gap:           2,
+                  }}
                 >
-                  Escrever artigo
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => { setMode('bulk-import'); setAddMenuOpen(false) }}
-                  style={{ height: 44, padding: '0 12px', textAlign: 'left', borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--text)', fontSize: 14, cursor: 'pointer' }}
-                >
-                  Colar lista
-                </button>
-                <div style={{ height: 1, background: 'var(--border)', margin: '4px 8px' }} />
-                {(['Importar PDF', 'Importar Excel', 'Tirar foto'] as const).map(label => (
-                  <div
-                    key={label}
+                  <button
                     role="menuitem"
-                    aria-disabled
-                    style={{ height: 44, padding: '0 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: 6, color: 'var(--text-subtle)', fontSize: 14, cursor: 'not-allowed', opacity: 0.6 }}
+                    type="button"
+                    onClick={() => { setSelected(null); setMode('create'); setAddMenuOpen(false) }}
+                    style={menuItemStyle}
                   >
-                    <span>{label}</span>
-                    <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--text-subtle)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px' }}>
-                      EM BREVE
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
+                    Escrever artigo
+                  </button>
+                  <button
+                    role="menuitem"
+                    type="button"
+                    onClick={() => { setMode('bulk-import'); setAddMenuOpen(false) }}
+                    style={menuItemStyle}
+                  >
+                    Colar lista
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-        <input
-          type="text"
-          placeholder="Pesquisar artigo ou categoria…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ width: '100%', height: 40, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '0 12px', color: 'var(--text)', fontSize: 14, outline: 'none' }}
-        />
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: 'var(--text-subtle)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />
-          Mostrar inativos
-        </label>
+
+        {/* Chips de categoria — copy do InventoryScreen para manter consistência
+            visual sem extrair componente partilhado nesta primeira passada. */}
+        <div
+          role="tablist"
+          aria-label="Filtrar por categoria"
+          style={{
+            display:                 'flex',
+            gap:                     6,
+            overflowX:               'auto',
+            overflowY:               'hidden',
+            margin:                  '0 -20px',
+            padding:                 '0 20px 4px',
+            scrollbarWidth:          'none',
+            WebkitOverflowScrolling: 'touch',
+          }}
+        >
+          <CategoryChip label="Todas" active={selectedCategory === null} onClick={() => setSelectedCategory(null)} />
+          {ARTICLE_CATEGORIES.map(c => (
+            <CategoryChip
+              key={c}
+              label={c}
+              active={selectedCategory === c}
+              onClick={() => setSelectedCategory(c)}
+            />
+          ))}
+          {hasUncategorized && (
+            <CategoryChip
+              label="Sem categoria"
+              active={selectedCategory === '__none__'}
+              onClick={() => setSelectedCategory('__none__')}
+            />
+          )}
+        </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+      {/* Lista plana — sem section headers */}
+      <div style={{
+        flex:          1,
+        overflowY:     'auto',
+        padding:       '8px 12px 16px',
+        display:       'flex',
+        flexDirection: 'column',
+        gap:           6,
+      }}>
         {error && (
-          <div style={{ background: 'var(--error-surface)', border: '1px solid var(--error-border)', borderRadius: 8, padding: '10px 14px', color: 'var(--error)', fontSize: 13, marginBottom: 8 }}>
+          <div style={{ background: 'var(--error-surface)', border: '1px solid var(--error-border)', borderRadius: 8, padding: '10px 14px', color: 'var(--error)', fontSize: 13 }}>
             {error}
           </div>
         )}
-        {filtered.length === 0 && (
-          <p style={{ color: 'var(--text-subtle)', fontSize: 14, textAlign: 'center', paddingTop: 32 }}>
-            Nenhum artigo encontrado
-          </p>
-        )}
-        {grouped.map(([cat, items]) => (
-          <div key={cat} style={{ marginBottom: 16 }}>
-            <p style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', letterSpacing: '0.08em', marginBottom: 6, paddingLeft: 2 }}>
-              {cat.toUpperCase()}
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {items.map(a => (
-                <button
-                  key={a.id}
-                  onClick={() => handleSelect(a)}
-                  style={{
-                    width:        '100%',
-                    textAlign:    'left',
-                    padding:      '10px 14px',
-                    borderRadius: 8,
-                    border:       `1px solid ${selected?.id === a.id ? 'var(--action)' : 'var(--border)'}`,
-                    background:   selected?.id === a.id ? 'var(--action-surface)' : 'var(--surface)',
-                    cursor:       'pointer',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 14, fontWeight: 600, color: a.is_active ? 'var(--text)' : 'var(--text-subtle)' }}>
-                      {a.name}
-                    </span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12, color: 'var(--text-subtle)' }}>
-                        {a.unit}
-                      </span>
-                      {!a.is_active && (
-                        <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-subtle)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4, letterSpacing: '0.05em' }}>
-                          INATIVO
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  {a.par_level > 0 && (
-                    <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>
-                      Par:{' '}
-                      <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--text-muted)' }}>
-                        {a.par_level} {a.unit}
-                      </span>
-                    </p>
-                  )}
-                </button>
-              ))}
-            </div>
+        {displayed.length === 0 && (
+          <div style={{ textAlign: 'center', color: 'var(--text-subtle)', paddingTop: 40, fontSize: 14 }}>
+            {searchQuery.trim().length > 0
+              ? `Sem resultados para "${searchQuery.trim()}".`
+              : 'Nenhum artigo encontrado'}
           </div>
+        )}
+        {displayed.map(a => (
+          <ArticleListCard
+            key={a.id}
+            article={a}
+            isSelected={selected?.id === a.id}
+            onSelect={() => handleSelect(a)}
+          />
         ))}
+        {/* Padding extra no fundo para o último card não ficar coberto pelo FAB. */}
+        <div style={{ height: 80, flexShrink: 0 }} aria-hidden="true" />
       </div>
+
+      <FloatingSearch query={searchQuery} onChange={setSearchQuery} />
     </div>
   )
 
-  // ── Right panel content ────────────────────────────────────────────────────
+  // ── Right panel ────────────────────────────────────────────────────────────
   const rightPanel = (
-    <div style={{ background: mode === 'aliases' ? 'var(--bg)' : 'var(--primary)', display: 'flex', flexDirection: 'column', height: '100%', overflowY: mode === 'bulk-import' ? 'hidden' : 'auto', padding: mode === 'bulk-import' || mode === 'aliases' ? 0 : '24px 20px' }}>
+    <div style={{
+      background:     mode === 'bulk-import' ? 'var(--primary)' : 'var(--primary)',
+      display:        'flex',
+      flexDirection:  'column',
+      height:         '100%',
+      overflow:       'hidden',
+    }}>
       {mode === 'bulk-import' && (
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '24px 20px' }}>
           <BulkImportPanel
@@ -294,11 +347,8 @@ export default function ArticlesScreen() {
           onCancel={() => { setMode('idle'); setSelected(null) }}
         />
       )}
-      {mode === 'aliases' && (
-        <AliasManagerPanel onClose={() => setMode('idle')} />
-      )}
       {mode === 'idle' && (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
           <p style={{ color: 'var(--text-on-primary-faint)', fontSize: 14 }}>Seleciona ou cria um artigo</p>
         </div>
       )}
@@ -315,7 +365,7 @@ export default function ArticlesScreen() {
     )
   }
 
-  // ── Desktop: list is the main area, right panel is the supporting sidebar ──
+  // ── Desktop ────────────────────────────────────────────────────────────────
   return (
     <div style={{
       display:             'grid',
@@ -327,4 +377,252 @@ export default function ArticlesScreen() {
       {rightPanel}
     </div>
   )
+}
+
+// ── Card ─────────────────────────────────────────────────────────────────────
+
+interface ArticleListCardProps {
+  article:    Article
+  isSelected: boolean
+  onSelect:   () => void
+}
+
+function ArticleListCard({ article, isSelected, onSelect }: ArticleListCardProps) {
+  // Card compacto — mesma forma do InlineCountRow do Inventário (min-height 56,
+  // border 10), sem stepper. Conteúdo:
+  //   linha 1: [nome flex] [INATIVO?] [unit pequena à direita]
+  //   linha 2 (opcional, par_level > 0): "Par: X unit"
+  //
+  // Usa <div role="button"> em vez de <button> nativo para evitar o bug do
+  // iOS Safari que colapsava cards multi do Inventário (button + flex children
+  // ignora min-height — ver commit 5f3ec50).
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onSelect()
+    }
+  }
+
+  const hasPar = article.par_level > 0
+  const dimmedName = !article.is_active
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={handleKeyDown}
+      aria-pressed={isSelected}
+      style={{
+        width:        '100%',
+        background:   isSelected ? 'var(--action-surface)' : 'var(--surface)',
+        border:       `1px solid ${isSelected ? 'var(--action)' : 'var(--border)'}`,
+        borderRadius: 10,
+        padding:      '8px 12px',
+        minHeight:    56,
+        flexShrink:   0,
+        display:      'flex',
+        flexDirection: 'column',
+        gap:          2,
+        cursor:       'pointer',
+        touchAction:  'manipulation',
+        textAlign:    'left',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 32 }}>
+        <span style={{
+          flex:         1,
+          minWidth:     0,
+          fontSize:     15,
+          fontWeight:   600,
+          color:        dimmedName ? 'var(--text-subtle)' : 'var(--text)',
+          whiteSpace:   'nowrap',
+          overflow:     'hidden',
+          textOverflow: 'ellipsis',
+        }}>
+          {article.name}
+        </span>
+        {!article.is_active && (
+          <span style={{
+            fontSize:      9,
+            fontWeight:    700,
+            letterSpacing: 0.5,
+            color:         'var(--text-subtle)',
+            background:    'var(--bg)',
+            border:        '1px solid var(--border)',
+            borderRadius:  4,
+            padding:       '1px 5px',
+            flexShrink:    0,
+          }}>
+            INATIVO
+          </span>
+        )}
+        <span style={{
+          fontSize:    12,
+          color:       'var(--text-muted)',
+          fontFamily:  'var(--font-mono), monospace',
+          flexShrink:  0,
+        }}>
+          {article.unit}
+        </span>
+      </div>
+      {hasPar && (
+        <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>
+          Par:{' '}
+          <span style={{ fontFamily: 'var(--font-mono), monospace', color: 'var(--text-muted)' }}>
+            {article.par_level} {article.unit}
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Status filter dropdown ───────────────────────────────────────────────────
+
+function StatusFilterDropdown({
+  value,
+  onChange,
+}: {
+  value:    StatusFilter
+  onChange: (next: StatusFilter) => void
+}) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Filtro: ${STATUS_LABEL[value]}`}
+        style={{
+          minHeight:    'var(--touch-min)',
+          padding:      '0 12px',
+          borderRadius: 8,
+          border:       '1px solid var(--border)',
+          background:   'var(--surface)',
+          color:        'var(--text)',
+          fontSize:     13,
+          fontWeight:   600,
+          display:      'flex',
+          alignItems:   'center',
+          gap:          6,
+          cursor:       'pointer',
+          touchAction:  'manipulation',
+          whiteSpace:   'nowrap',
+        }}
+      >
+        <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Filtro:</span>
+        <span>{STATUS_LABEL[value]}</span>
+        <span aria-hidden="true" style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 2 }}>▾</span>
+      </button>
+      {open && (
+        <>
+          <div
+            onClick={() => setOpen(false)}
+            aria-hidden="true"
+            style={{ position: 'fixed', inset: 0, zIndex: 50 }}
+          />
+          <div
+            role="menu"
+            style={{
+              position:     'absolute',
+              top:          'calc(100% + 4px)',
+              right:        0,
+              background:   'var(--surface-2)',
+              border:       '1px solid var(--border)',
+              borderRadius: 8,
+              minWidth:     160,
+              zIndex:       51,
+              overflow:     'hidden',
+              boxShadow:    '0 4px 16px var(--border)',
+            }}
+          >
+            {(['active', 'all', 'inactive'] as const).map(opt => {
+              const active = opt === value
+              return (
+                <button
+                  key={opt}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { onChange(opt); setOpen(false) }}
+                  style={{
+                    width:      '100%',
+                    minHeight:  44,
+                    padding:    '10px 14px',
+                    background: active ? 'var(--bg)' : 'transparent',
+                    border:     'none',
+                    color:      'var(--text)',
+                    fontSize:   14,
+                    fontWeight: active ? 700 : 500,
+                    textAlign:  'left',
+                    cursor:     'pointer',
+                    display:    'flex',
+                    alignItems: 'center',
+                    gap:        8,
+                  }}
+                >
+                  {active && <span aria-hidden="true" style={{ color: 'var(--success)', fontWeight: 700 }}>✓</span>}
+                  {!active && <span aria-hidden="true" style={{ width: 12, display: 'inline-block' }} />}
+                  {STATUS_LABEL[opt]}
+                </button>
+              )
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ── Category chip ────────────────────────────────────────────────────────────
+
+function CategoryChip({
+  label,
+  active,
+  onClick,
+}: {
+  label:    string
+  active:   boolean
+  onClick:  () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      style={{
+        flexShrink:   0,
+        minHeight:    'var(--touch-min)',
+        padding:      '0 14px',
+        borderRadius: 22,
+        border:       `1px solid ${active ? 'var(--action)' : 'var(--border)'}`,
+        background:   active ? 'var(--action-surface)' : 'var(--surface)',
+        color:        active ? 'var(--action)' : 'var(--text-muted)',
+        fontSize:     13,
+        fontWeight:   active ? 600 : 500,
+        whiteSpace:   'nowrap',
+        cursor:       'pointer',
+        touchAction:  'manipulation',
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
+const menuItemStyle: React.CSSProperties = {
+  height:        44,
+  padding:       '0 12px',
+  textAlign:     'left',
+  borderRadius:  6,
+  border:        'none',
+  background:    'transparent',
+  color:         'var(--text)',
+  fontSize:      14,
+  cursor:        'pointer',
+  touchAction:   'manipulation',
 }

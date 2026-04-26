@@ -431,18 +431,67 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Header */}
-      <div style={{ marginBottom: 20, flexShrink: 0 }}>
-        <p style={{ fontSize: 11, color: 'var(--text-on-primary-subtle)', letterSpacing: '0.08em', marginBottom: 4 }}>
-          {isEdit ? 'EDITAR ARTIGO' : 'NOVO ARTIGO'}
-        </p>
-        <h3 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-on-primary)' }}>
-          {isEdit ? existing.name : 'Novo Artigo'}
-        </h3>
+      {/* Header sticky com chevron de voltar — antes só havia "← Voltar" no
+          rodapé do form, o que em mobile obrigava a scroll de ~1000 linhas
+          para sair sem guardar. O ícone à esquerda + título à direita
+          espelham o padrão usado em AliasManagerPanel/BulkImportPanel. */}
+      <div style={{
+        flexShrink:    0,
+        padding:       '16px 20px 12px',
+        borderBottom:  '1px solid var(--border-on-primary-soft)',
+        display:       'flex',
+        alignItems:    'center',
+        gap:           12,
+        marginBottom:  16,
+      }}>
+        <button
+          type="button"
+          onClick={handleCancel}
+          aria-label="Voltar"
+          style={{
+            width:          'var(--touch-min)',
+            height:         'var(--touch-min)',
+            borderRadius:   8,
+            border:         '1px solid var(--border-on-primary)',
+            background:     'transparent',
+            color:          'var(--text-on-primary-muted)',
+            fontSize:       18,
+            cursor:         'pointer',
+            display:        'flex',
+            alignItems:     'center',
+            justifyContent: 'center',
+            flexShrink:     0,
+            touchAction:    'manipulation',
+          }}
+        >
+          ←
+        </button>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <p style={{
+            fontSize:      11,
+            color:         'var(--text-on-primary-subtle)',
+            letterSpacing: '0.08em',
+            marginBottom:  2,
+            margin:        0,
+          }}>
+            {isEdit ? 'EDITAR ARTIGO' : 'NOVO ARTIGO'}
+          </p>
+          <h3 style={{
+            fontSize:     18,
+            fontWeight:   700,
+            color:        'var(--text-on-primary)',
+            margin:       0,
+            whiteSpace:   'nowrap',
+            overflow:     'hidden',
+            textOverflow: 'ellipsis',
+          }}>
+            {isEdit ? existing.name : 'Novo Artigo'}
+          </h3>
+        </div>
       </div>
 
       {/* Body */}
-      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14, padding: '0 20px' }}>
 
         {/* Name */}
         <div>
