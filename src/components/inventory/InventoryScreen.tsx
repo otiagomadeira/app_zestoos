@@ -7,7 +7,9 @@ import { fetchPackagings, type Packaging } from '@/lib/stockCount'
 import { useCurrentOrgId } from '@/hooks/useCurrentOrgId'
 import { useInventorySession } from '@/hooks/useInventorySession'
 import { ARTICLE_CATEGORIES, normalizeCanonicalCategory } from '@/lib/categoryKeywords'
+import { searchMatch } from '@/lib/search'
 import ArticleCard from './ArticleCard'
+import FloatingSearch from './FloatingSearch'
 
 export default function InventoryScreen() {
   const [articles,    setArticles]    = useState<CurrentStock[]>([])
@@ -25,6 +27,7 @@ export default function InventoryScreen() {
 
   const [selectedCategory,    setSelectedCategory]    = useState<string | null>(null)
   const [selectedCountStatus, setSelectedCountStatus] = useState<'uncounted' | 'counted' | 'all'>('all')
+  const [searchQuery,         setSearchQuery]         = useState<string>('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -59,13 +62,19 @@ export default function InventoryScreen() {
     [articles]
   )
 
-  // Lista exibida. Default 'all' = alfabético puro, sem segmentação por estado
-  // (counted aparece in-place com ✓ no card; mantém posição estável durante
-  // toda a sessão para não desaparecer ao guardar).
+  // Lista exibida. Pipeline: search → categoria → estado → sort.
+  // Default 'all' = alfabético puro, sem segmentação por estado (counted
+  // aparece in-place com ✓ no card; mantém posição estável durante a sessão).
   const displayed = useMemo(() => {
     const byName = (a: CurrentStock, b: CurrentStock) => a.name.localeCompare(b.name, 'pt')
 
     let pool = articles
+
+    const q = searchQuery.trim()
+    if (q.length > 0) {
+      pool = pool.filter(a => searchMatch(q, a.name))
+    }
+
     if (selectedCategory === '__none__') {
       pool = pool.filter(a => normalizeCanonicalCategory(a.category) === null)
     } else if (selectedCategory) {
@@ -79,7 +88,7 @@ export default function InventoryScreen() {
       return pool.filter(a => !countedThisSession.has(a.article_id)).sort(byName)
     }
     return pool.slice().sort(byName)
-  }, [articles, selectedCategory, selectedCountStatus, countedThisSession])
+  }, [articles, searchQuery, selectedCategory, selectedCountStatus, countedThisSession])
 
   const handleToggle = useCallback((id: string) => {
     setSelectedId(prev => prev === id ? null : id)
@@ -193,9 +202,11 @@ export default function InventoryScreen() {
         )}
         {displayed.length === 0 && (
           <div style={{ textAlign: 'center', color: 'var(--text-subtle)', paddingTop: 40, fontSize: 14 }}>
-            {selectedCountStatus === 'uncounted' && countedThisSession.size > 0
-              ? 'Tudo contado nesta sessão.'
-              : 'Nenhum artigo encontrado'}
+            {searchQuery.trim().length > 0
+              ? `Sem resultados para "${searchQuery.trim()}".`
+              : selectedCountStatus === 'uncounted' && countedThisSession.size > 0
+                ? 'Tudo contado nesta sessão.'
+                : 'Nenhum artigo encontrado'}
           </div>
         )}
         {displayed.map(article => {
@@ -213,7 +224,11 @@ export default function InventoryScreen() {
             />
           )
         })}
+        {/* Padding extra no fundo para o último card não ficar coberto pelo FAB. */}
+        <div style={{ height: 80, flexShrink: 0 }} aria-hidden="true" />
       </div>
+
+      <FloatingSearch query={searchQuery} onChange={setSearchQuery} />
     </div>
   )
 }

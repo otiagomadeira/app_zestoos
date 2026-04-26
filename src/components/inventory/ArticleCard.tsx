@@ -37,7 +37,11 @@ export default function ArticleCard({
     article.single_packaging_label !== null &&
     article.single_packaging_base_per_unit !== null
 
-  const isMulti = (packagings?.length ?? 0) > 1
+  // Derivado de current_stock view (sempre disponível, mesmo colapsado).
+  // Antes era derivado de `packagings` (carregado só ao expandir), o que
+  // fazia o badge MULTI desaparecer no estado colapsado e tornava o card
+  // visualmente indistinguível de uma linha vazia.
+  const isMulti = article.packaging_count > 1
 
   // Ref que aponta para a flush() do hook do ExpandedBody. Permite ao
   // header forçar save antes de colapsar (fire-and-forget).
@@ -136,6 +140,16 @@ export default function ArticleCard({
         }}>
           {isCounted ? formatBaseQty(article.current_qty, article.unit) : '—'}
         </span>
+        {/* Chevron sinaliza que o card multi expande. ▴ quando aberto, ▾ fechado. */}
+        <span aria-hidden="true" style={{
+          fontSize:    11,
+          color:       'var(--text-muted)',
+          flexShrink:  0,
+          marginLeft:  -2,
+          lineHeight:  1,
+          transition:  'transform 0.15s',
+          transform:   isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+        }}>▾</span>
       </button>
 
       {isExpanded && (
