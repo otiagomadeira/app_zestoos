@@ -239,6 +239,11 @@ function ExpandedBody({
     }, 0)
   }, [packagings, qtys])
 
+  // Compactação para artigo de 1 embalagem: esconde separador e linha "Total"
+  // (redundante quando há um único packaging — o número typed coincide com o
+  // total exibido). Não afecta p_lines: handleSave continua a iterar packagings.
+  const isSimple = packagings !== null && packagings.length === 1
+
   // Guardar disabled quando: a guardar; ou (total=0 AND stock atual já era 0).
   const saveDisabled = isSaving || (total === 0 && currentQty === 0)
 
@@ -288,7 +293,9 @@ function ExpandedBody({
         gap:           8,
       }}
     >
-      <div style={{ height: 1, background: 'var(--border)', margin: '4px 2px 4px' }} />
+      {!isSimple && (
+        <div style={{ height: 1, background: 'var(--border)', margin: '4px 2px 4px' }} />
+      )}
 
       {packagings === null && (
         <p style={{ fontSize: 13, color: 'var(--text-subtle)', textAlign: 'center', padding: 16, margin: 0 }}>
@@ -316,26 +323,28 @@ function ExpandedBody({
         )
       })}
 
-      <div
-        aria-live="polite"
-        style={{
-          display:        'flex',
-          alignItems:     'baseline',
-          justifyContent: 'space-between',
-          paddingTop:     6,
-          paddingBottom:  2,
-        }}
-      >
-        <span style={{ fontSize: 12, color: 'var(--text-subtle)' }}>Total</span>
-        <span style={{
-          fontFamily: 'var(--font-mono), monospace',
-          fontSize:   17,
-          fontWeight: 700,
-          color:      total > 0 ? 'var(--text)' : 'var(--text-subtle)',
-        }}>
-          {formatBaseQty(total, baseUnit)}
-        </span>
-      </div>
+      {!isSimple && (
+        <div
+          aria-live="polite"
+          style={{
+            display:        'flex',
+            alignItems:     'baseline',
+            justifyContent: 'space-between',
+            paddingTop:     6,
+            paddingBottom:  2,
+          }}
+        >
+          <span style={{ fontSize: 12, color: 'var(--text-subtle)' }}>Total</span>
+          <span style={{
+            fontFamily: 'var(--font-mono), monospace',
+            fontSize:   17,
+            fontWeight: 700,
+            color:      total > 0 ? 'var(--text)' : 'var(--text-subtle)',
+          }}>
+            {formatBaseQty(total, baseUnit)}
+          </span>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
         <button
