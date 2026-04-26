@@ -7,6 +7,7 @@ import { fetchPackagings, recordStockCount, type Packaging, type CountLine } fro
 import { useCurrentOrgId } from '@/hooks/useCurrentOrgId'
 import { useInventorySession } from '@/hooks/useInventorySession'
 import { ARTICLE_CATEGORIES, normalizeCanonicalCategory } from '@/lib/categoryKeywords'
+import { searchMatch } from '@/lib/search'
 import ArticleCard from './ArticleCard'
 
 export default function InventoryScreen() {
@@ -76,13 +77,10 @@ export default function InventoryScreen() {
   // 'all'        = activos → skipped → contados (estado-ortogonal, alfabético dentro)
   const displayed = useMemo(() => {
     const byName = (a: CurrentStock, b: CurrentStock) => a.name.localeCompare(b.name, 'pt')
-    const q = search.toLowerCase()
 
     let pool = articles
-    if (q) {
-      pool = pool.filter(a =>
-        a.name.toLowerCase().includes(q) || (a.category ?? '').toLowerCase().includes(q)
-      )
+    if (search.trim()) {
+      pool = pool.filter(a => searchMatch(search, a.name))
     }
     if (selectedCategory === '__none__') {
       pool = pool.filter(a => normalizeCanonicalCategory(a.category) === null)
@@ -174,8 +172,6 @@ export default function InventoryScreen() {
     advanceToNext(articleId)
   }, [selectedArticle, advanceToNext, addSkipped])
 
-  const belowPar = articles.filter(a => a.current_qty < a.par_level).length
-
   if (loading) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh' }}>
@@ -203,7 +199,6 @@ export default function InventoryScreen() {
             <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>Contagem de Stock</h2>
             <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>
               {articles.length} artigos
-              {belowPar > 0 && <span style={{ color: 'var(--error)', marginLeft: 8 }}>· {belowPar} abaixo do par</span>}
             </p>
           </div>
         </div>

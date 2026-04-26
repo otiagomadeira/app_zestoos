@@ -5,7 +5,6 @@ import type { CurrentStock } from '@/types/database'
 import type { Packaging, CountLine } from '@/lib/stockCount'
 import { packagingKey } from '@/lib/stockCount'
 import { formatBaseQty } from '@/lib/units'
-import { normalizeCanonicalCategory } from '@/lib/categoryKeywords'
 import PackagingLine from './PackagingLine'
 
 interface ArticleCardProps {
@@ -34,11 +33,15 @@ function spaceDigitsAndLetters(s: string): string {
 }
 
 // Display da label da embalagem.
-// - fallback: tal e qual ("kg solto", "L solto")
+// - fallback: "Unidade" para 'un', "A granel" para g/mL/kg/L, original para exóticos
 // - tem dígito: normaliza espaços ("saco 25kg" → "saco 25 kg")
 // - sem dígito: anexa formatBaseQty(base_per_unit, baseUnit)
 function formatPackagingLabel(p: Packaging, baseUnit: string): string {
-  if (p.source === 'fallback') return p.label
+  if (p.source === 'fallback') {
+    if (baseUnit === 'un')                                  return 'Unidade'
+    if (['g', 'mL', 'kg', 'L'].includes(baseUnit))          return 'A granel'
+    return p.label
+  }
   if (/\d/.test(p.label))      return spaceDigitsAndLetters(p.label)
   return `${p.label} ${formatBaseQty(p.base_per_unit, baseUnit)}`
 }
@@ -54,9 +57,7 @@ export default function ArticleCard({
   onSkip,
   onSave,
 }: ArticleCardProps) {
-  const isBelowPar  = article.current_qty < article.par_level
-  const statusColor = isBelowPar ? 'var(--error)' : 'var(--success)'
-  const isMulti     = (packagings?.length ?? 0) > 1
+  const isMulti = (packagings?.length ?? 0) > 1
 
   // Sinalizado pelo ExpandedBody enquanto montado. Lido em handleHeaderClick
   // para confirmar descarte de contagem ao colapsar.
@@ -147,20 +148,6 @@ export default function ArticleCard({
               <span style={{ fontSize: 12, color: 'var(--text-subtle)', flexShrink: 0 }}>…</span>
             )}
           </div>
-          <p style={{
-            fontSize:     11,
-            color:        'var(--text-subtle)',
-            whiteSpace:   'nowrap',
-            overflow:     'hidden',
-            textOverflow: 'ellipsis',
-            margin:       0,
-          }}>
-            par{' '}
-            <span style={{ fontFamily: 'var(--font-mono), monospace', color: 'var(--text-muted)' }}>
-              {formatBaseQty(article.par_level, article.unit)}
-            </span>
-            {` · ${normalizeCanonicalCategory(article.category) ?? 'Sem categoria'}`}
-          </p>
         </div>
         <div style={{
           flexShrink:    0,
@@ -171,9 +158,9 @@ export default function ArticleCard({
           minWidth:      72,
         }}>
           <span style={{
-            background:   isBelowPar ? 'var(--error-surface)' : 'var(--success-surface)',
-            color:        statusColor,
-            border:       `1px solid ${isBelowPar ? 'var(--error-border)' : 'var(--success-border)'}`,
+            background:   'var(--surface-2)',
+            color:        'var(--text)',
+            border:       '1px solid var(--border)',
             borderRadius: 8,
             padding:      '4px 10px',
             fontFamily:   'var(--font-mono), monospace',
@@ -183,16 +170,6 @@ export default function ArticleCard({
           }}>
             {formatBaseQty(article.current_qty, article.unit)}
           </span>
-          {isBelowPar && (
-            <span style={{
-              fontFamily: 'var(--font-mono), monospace',
-              fontSize:   10,
-              color:      'var(--error)',
-              fontWeight: 600,
-            }}>
-              −{formatBaseQty(Math.abs(article.diff_from_par), article.unit)}
-            </span>
-          )}
         </div>
       </button>
 
