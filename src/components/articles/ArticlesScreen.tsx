@@ -388,14 +388,14 @@ interface ArticleListCardProps {
 }
 
 function ArticleListCard({ article, isSelected, onSelect }: ArticleListCardProps) {
-  // Card compacto — mesma forma do InlineCountRow do Inventário (min-height 56,
-  // border 10), sem stepper. Conteúdo:
-  //   linha 1: [nome flex] [INATIVO?] [unit pequena à direita]
-  //   linha 2 (opcional, par_level > 0): "Par: X unit"
+  // Card compacto, single-row — espelha o pattern visual do Inventário:
+  // alinhamento vertical centrado (alignItems:center) e nome em flex:1.
+  // Stock mínimo / par level NÃO aparece aqui — esta lista é gestão de
+  // artigos, não monitorização de stock. Quem precisa, abre o detalhe.
   //
-  // Usa <div role="button"> em vez de <button> nativo para evitar o bug do
-  // iOS Safari que colapsava cards multi do Inventário (button + flex children
-  // ignora min-height — ver commit 5f3ec50).
+  // <div role="button"> em vez de <button> nativo para evitar o bug do
+  // iOS Safari que colapsava cards multi do Inventário (button + flex
+  // children ignora min-height — ver commit 5f3ec50).
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
@@ -403,7 +403,6 @@ function ArticleListCard({ article, isSelected, onSelect }: ArticleListCardProps
     }
   }
 
-  const hasPar = article.par_level > 0
   const dimmedName = !article.is_active
 
   return (
@@ -422,58 +421,48 @@ function ArticleListCard({ article, isSelected, onSelect }: ArticleListCardProps
         minHeight:    56,
         flexShrink:   0,
         display:      'flex',
-        flexDirection: 'column',
-        gap:          2,
+        alignItems:   'center',
+        gap:          8,
         cursor:       'pointer',
         touchAction:  'manipulation',
         textAlign:    'left',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 32 }}>
+      <span style={{
+        flex:         1,
+        minWidth:     0,
+        fontSize:     15,
+        fontWeight:   600,
+        color:        dimmedName ? 'var(--text-subtle)' : 'var(--text)',
+        whiteSpace:   'nowrap',
+        overflow:     'hidden',
+        textOverflow: 'ellipsis',
+      }}>
+        {article.name}
+      </span>
+      {!article.is_active && (
         <span style={{
-          flex:         1,
-          minWidth:     0,
-          fontSize:     15,
-          fontWeight:   600,
-          color:        dimmedName ? 'var(--text-subtle)' : 'var(--text)',
-          whiteSpace:   'nowrap',
-          overflow:     'hidden',
-          textOverflow: 'ellipsis',
+          fontSize:      9,
+          fontWeight:    700,
+          letterSpacing: 0.5,
+          color:         'var(--text-subtle)',
+          background:    'var(--bg)',
+          border:        '1px solid var(--border)',
+          borderRadius:  4,
+          padding:       '1px 5px',
+          flexShrink:    0,
         }}>
-          {article.name}
+          INATIVO
         </span>
-        {!article.is_active && (
-          <span style={{
-            fontSize:      9,
-            fontWeight:    700,
-            letterSpacing: 0.5,
-            color:         'var(--text-subtle)',
-            background:    'var(--bg)',
-            border:        '1px solid var(--border)',
-            borderRadius:  4,
-            padding:       '1px 5px',
-            flexShrink:    0,
-          }}>
-            INATIVO
-          </span>
-        )}
-        <span style={{
-          fontSize:    12,
-          color:       'var(--text-muted)',
-          fontFamily:  'var(--font-mono), monospace',
-          flexShrink:  0,
-        }}>
-          {article.unit}
-        </span>
-      </div>
-      {hasPar && (
-        <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>
-          Par:{' '}
-          <span style={{ fontFamily: 'var(--font-mono), monospace', color: 'var(--text-muted)' }}>
-            {article.par_level} {article.unit}
-          </span>
-        </div>
       )}
+      <span style={{
+        fontSize:    12,
+        color:       'var(--text-muted)',
+        fontFamily:  'var(--font-mono), monospace',
+        flexShrink:  0,
+      }}>
+        {article.unit}
+      </span>
     </div>
   )
 }
