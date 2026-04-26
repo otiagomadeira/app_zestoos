@@ -13,6 +13,20 @@ export function formatStockQty(qty: number, unit: string): string {
   return formatUnit(qty, unit)
 }
 
+// Display de qty em base_unit "no idioma do cozinheiro": vírgula PT, sem
+// embalagens (saco/lata/caixa). Usado em ArticleCard (Inventário) e no
+// total agregado do CountSheet.
+//   g  ≥1000 → "5,2 kg" | <1000 → "750 g"
+//   mL ≥1000 → "3 L"    | <1000 → "750 mL"
+//   kg/L/un  → tal como está
+//   exótico (ex.: 'balde') → tal como está, sem conversão
+export function formatBaseQty(qtyBase: number, baseUnit: string): string {
+  const fmt = (n: number) => (+(n.toFixed(2))).toString().replace('.', ',')
+  if (baseUnit === 'g')  return qtyBase >= 1000 ? `${fmt(qtyBase / 1000)} kg` : `${fmt(qtyBase)} g`
+  if (baseUnit === 'mL') return qtyBase >= 1000 ? `${fmt(qtyBase / 1000)} L`  : `${fmt(qtyBase)} mL`
+  return `${fmt(qtyBase)} ${baseUnit}`
+}
+
 // Formata qty (em base_unit) para display em stock_unit:
 // - stock_unit === unit → formatStockQty (auto-converte g→kg, mL→L)
 // - stock_unit !== unit → divide por basePerStock e mostra com stock_unit

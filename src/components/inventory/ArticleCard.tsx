@@ -1,7 +1,7 @@
 'use client'
 
 import type { CurrentStock } from '@/types/database'
-import { formatStockDisplay } from '@/lib/units'
+import { formatBaseQty } from '@/lib/units'
 
 interface ArticleCardProps {
   article:     CurrentStock
@@ -106,7 +106,7 @@ export default function ArticleCard({
               fontWeight: 700,
               color:      statusColor,
             }}>
-              {formatStockDisplay(article.current_qty, article.unit, article.stock_unit, article.base_per_stock)}
+              {formatBaseQty(article.current_qty, article.unit)}
             </span>
           </div>
         </div>
@@ -125,12 +125,12 @@ export default function ArticleCard({
           <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
             Par:{' '}
             <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--text-muted)' }}>
-              {formatStockDisplay(article.par_level, article.unit, article.stock_unit, article.base_per_stock)}
+              {formatBaseQty(article.par_level, article.unit)}
             </span>
           </span>
           {isBelowPar && (
             <span style={{ fontSize: 11, color: 'var(--error)', fontFamily: 'JetBrains Mono, monospace' }}>
-              −{formatStockDisplay(Math.abs(article.diff_from_par), article.unit, article.stock_unit, article.base_per_stock)}
+              −{formatBaseQty(Math.abs(article.diff_from_par), article.unit)}
             </span>
           )}
         </div>

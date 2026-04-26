@@ -2,26 +2,23 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import type { CurrentStock } from '@/types/database'
-import { fetchCurrentStock, saveStockCount } from '@/lib/supabase'
+import { fetchCurrentStock } from '@/lib/supabase'
+import { fetchPackagings, recordStockCount, type Packaging, type CountLine } from '@/lib/stockCount'
 import { useCurrentOrgId } from '@/hooks/useCurrentOrgId'
 import { useInventorySession } from '@/hooks/useInventorySession'
 import ArticleCard from './ArticleCard'
-import Numpad from './Numpad'
+import CountSheet from './CountSheet'
 
 export default function InventoryScreen() {
-  const [articles,   setArticles]   = useState<CurrentStock[]>([])
-  const [loading,    setLoading]    = useState(true)
-  const [error,      setError]      = useState<string | null>(null)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [numpadValue, setNumpadValue] = useState<string>('')
-  const [savingId,   setSavingId]   = useState<string | null>(null)
-  // Guard síncrono contra double-tap em OK: setState é assíncrono, useRef
-  // evita janela em que dois cliques sucessivos disparem dois saveStockCount
-  // antes de savingId atualizar.
+  const [articles,    setArticles]    = useState<CurrentStock[]>([])
+  const [loading,     setLoading]     = useState(true)
+  const [error,       setError]       = useState<string | null>(null)
+  const [selectedId,  setSelectedId]  = useState<string | null>(null)
+  const [packagings,  setPackagings]  = useState<Packaging[] | null>(null)
+  const [savingId,    setSavingId]    = useState<string | null>(null)
+  // Guard síncrono contra double-tap em Guardar.
   const submitInFlight = useRef(false)
-  // Sessão de contagem persistida em localStorage por org+data. Recarregar
-  // mantém artigos contados/saltados marcados; à meia-noite local começa
-  // sessão nova.
+
   const orgId = useCurrentOrgId()
   const {
     counted: countedThisSession,
@@ -29,8 +26,9 @@ export default function InventoryScreen() {
     addCounted,
     addSkipped,
   } = useInventorySession(orgId)
-  const [search,      setSearch]      = useState('')
-  const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
+
+  const [search,       setSearch]       = useState('')
+  const [saveSuccess,  setSaveSuccess]  = useState<string | null>(null)
   const [saveNoChange, setSaveNoChange] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -48,9 +46,20 @@ export default function InventoryScreen() {
 
   useEffect(() => { load() }, [load])
 
-  // Limpa o valor do numpad sempre que muda o artigo selecionado.
-  // Garante que o valor digitado para um artigo não polui o seguinte.
-  useEffect(() => { setNumpadValue('') }, [selectedId])
+  // Sempre que muda o artigo seleccionado, refaz o fetch das embalagens.
+  // Limpa primeiro para forçar o sheet a mostrar "A carregar embalagens…"
+  // entre artigos diferentes em vez de exibir as do anterior.
+  useEffect(() => {
+    if (!selectedId) { setPackagings(null); return }
+    let cancelled = false
+    setPackagings(null)
+    fetchPackagings(selectedId)
+      .then(rows => { if (!cancelled) setPackagings(rows) })
+      .catch((e: unknown) => {
+        if (!cancelled) setError((e as Error).message ?? 'Erro ao carregar embalagens')
+      })
+    return () => { cancelled = true }
+  }, [selectedId])
 
   const filtered = useMemo(() =>
     articles.filter(a =>
@@ -88,35 +97,10 @@ export default function InventoryScreen() {
     setSelectedId(prev => prev === id ? null : id)
   }
 
-  // ── Numpad handlers (lógica espelhada de _test-numpad/page.tsx) ─────────────
-
-  const handleDigit = useCallback((d: string) => {
-    setNumpadValue(prev => {
-      if (prev.length >= 6) return prev
-      if (prev === '0' && d !== '.') return d
-      return prev + d
-    })
-  }, [])
-
-  const handleDecimal = useCallback(() => {
-    setNumpadValue(prev => {
-      if (prev.includes('.')) return prev
-      return prev === '' ? '0.' : prev + '.'
-    })
-  }, [])
-
-  const handleBackspace = useCallback(() => {
-    setNumpadValue(prev => prev.slice(0, -1))
-  }, [])
-
-  const handleClose = useCallback(() => {
-    setSelectedId(null)
-  }, [])
+  const handleClose = useCallback(() => { setSelectedId(null) }, [])
 
   const advanceToNext = useCallback((fromId: string) => {
     const idx = sortedFiltered.findIndex(a => a.article_id === fromId)
-    // Avança para o próximo ainda não tratado (nem contado, nem saltado).
-    // Loop linear porque a lista já vem ordenada com handled no fim — sai cedo.
     for (let i = idx + 1; i < sortedFiltered.length; i++) {
       const candidate = sortedFiltered[i]
       if (
@@ -130,28 +114,19 @@ export default function InventoryScreen() {
     setSelectedId(null)
   }, [sortedFiltered, countedThisSession, skippedThisSession])
 
-  const handleConfirm = useCallback(async () => {
-    // Guard síncrono: rejeita re-entry imediato (double-tap).
+  const handleSave = useCallback(async (lines: CountLine[]) => {
     if (submitInFlight.current) return
-    if (!selectedArticle || !numpadValue) return
-    const newQtyStock = parseFloat(numpadValue)
-    if (isNaN(newQtyStock) || newQtyStock < 0) return
+    if (!selectedArticle) return
 
-    // stock_unit → base_unit usando base_per_stock (vem da view current_stock,
-    // que escolhe supplier preferred → article_size default → 1).
-    const newQtyBase = newQtyStock * selectedArticle.base_per_stock
-    const articleId  = selectedArticle.article_id
-
+    const articleId = selectedArticle.article_id
     submitInFlight.current = true
     setSavingId(articleId)
     try {
-      const result = await saveStockCount(articleId, newQtyBase, selectedArticle.unit, selectedArticle.current_qty)
+      const result = await recordStockCount(articleId, lines)
       if (result.saved) {
-        setArticles(prev => prev.map(a =>
-          a.article_id === articleId
-            ? { ...a, current_qty: newQtyBase, diff_from_par: newQtyBase - a.par_level }
-            : a
-        ))
+        // Recarrega para reflectir current_qty actualizado e mover o artigo
+        // para a secção "contados" da sessão.
+        await load()
         setSaveSuccess(articleId)
         addCounted(articleId)
         setTimeout(() => setSaveSuccess(null), 1500)
@@ -167,7 +142,7 @@ export default function InventoryScreen() {
       setSavingId(null)
       submitInFlight.current = false
     }
-  }, [selectedArticle, numpadValue, advanceToNext, addCounted])
+  }, [selectedArticle, load, advanceToNext, addCounted])
 
   const handleSkip = useCallback(() => {
     if (!selectedArticle) return
@@ -252,7 +227,6 @@ export default function InventoryScreen() {
         )}
         {sortedFiltered.map(article => {
           const id = article.article_id
-
           return (
             <div key={id}>
               {saveSuccess === id && (
@@ -282,7 +256,7 @@ export default function InventoryScreen() {
                   textAlign:    'center',
                   marginBottom: 4,
                 }}>
-                  Sem alteração — valor igual ao atual
+                  Sem alteração — valor igual ao actual
                 </div>
               )}
               <ArticleCard
@@ -299,19 +273,15 @@ export default function InventoryScreen() {
       </div>
 
       {selectedArticle && (
-        <Numpad
+        <CountSheet
           articleName={selectedArticle.name}
-          // currentQty mostrado em stock_unit (ex.: 2 caixas em vez de 360 ovos).
-          currentQty={selectedArticle.current_qty / (selectedArticle.base_per_stock || 1)}
-          unit={selectedArticle.stock_unit}
-          value={numpadValue}
+          baseUnit={selectedArticle.unit}
+          currentQty={selectedArticle.current_qty}
+          packagings={packagings}
           saving={savingId === selectedArticle.article_id}
-          onDigit={handleDigit}
-          onDecimal={handleDecimal}
-          onBackspace={handleBackspace}
-          onOk={handleConfirm}
-          onSkip={handleSkip}
           onClose={handleClose}
+          onSkip={handleSkip}
+          onSave={handleSave}
         />
       )}
     </div>
