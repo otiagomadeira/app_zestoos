@@ -6,6 +6,7 @@ import type { Packaging, CountLine } from '@/lib/stockCount'
 import { packagingKey } from '@/lib/stockCount'
 import { formatBaseQty } from '@/lib/units'
 import PackagingLine from './PackagingLine'
+import InlineCountRow from './InlineCountRow'
 
 interface ArticleCardProps {
   article:    CurrentStock
@@ -14,9 +15,11 @@ interface ArticleCardProps {
   isSaving:   boolean
   isCounted:  boolean
   isSkipped:  boolean
+  sessionId:  string | null
   onToggle:   () => void
-  onSkip:     () => void
+  onSkip:     (articleId: string) => void
   onSave:     (lines: CountLine[]) => void
+  onCounted:  (articleId: string) => void
 }
 
 function parseQty(raw: string): number {
@@ -53,10 +56,20 @@ export default function ArticleCard({
   isSaving,
   isCounted,
   isSkipped,
+  sessionId,
   onToggle,
   onSkip,
   onSave,
+  onCounted,
 }: ArticleCardProps) {
+  // Branch single-packaging → linha inline directa (C1.3). Sem expansão,
+  // sem botão Guardar. Multi-embalagem (count > 1) cai no caminho
+  // legado abaixo, intacto desde a Fase A/B.
+  const isSimpleInline =
+    article.packaging_count === 1 &&
+    article.single_packaging_label !== null &&
+    article.single_packaging_base_per_unit !== null
+
   const isMulti = (packagings?.length ?? 0) > 1
 
   // Sinalizado pelo ExpandedBody enquanto montado. Lido em handleHeaderClick
@@ -69,6 +82,19 @@ export default function ArticleCard({
     }
     onToggle()
   }, [isExpanded, onToggle])
+
+  if (isSimpleInline) {
+    return (
+      <InlineCountRow
+        article={article}
+        sessionId={sessionId}
+        isCounted={isCounted}
+        isSkipped={isSkipped}
+        onCounted={onCounted}
+        onSkip={onSkip}
+      />
+    )
+  }
 
   return (
     <div
@@ -180,7 +206,7 @@ export default function ArticleCard({
           currentQty={article.current_qty}
           isSaving={isSaving}
           hasUnsavedRef={hasUnsavedRef}
-          onSkip={onSkip}
+          onSkip={() => onSkip(article.article_id)}
           onSave={onSave}
         />
       )}

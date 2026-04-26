@@ -95,29 +95,33 @@ export interface OrderItem {
 }
 
 export interface StockMovement {
-  id:            string
-  article_id:    string
-  type:          MovementType
-  quantity:      number
-  unit:          string
-  notes:         string | null
-  order_item_id: string | null
-  counted_at:    string
-  created_at:    string
+  id:                string
+  article_id:        string
+  type:              MovementType
+  quantity:          number
+  unit:              string
+  notes:             string | null
+  order_item_id:     string | null
+  counted_at:        string
+  count_session_id:  string | null  // sessão de contagem inline (NULL para movements antigos / não-inline)
+  created_at:        string
 }
 
 // ── Views ────────────────────────────────────────────────────
 
 export interface CurrentStock {
-  article_id:     string
-  name:           string
-  unit:           string        // base_unit (g, mL, un)
-  stock_unit:     string        // unidade de contagem; derivada do fornecedor preferido (=unit se sem supplier)
-  base_per_stock: number        // base_units por stock_unit (=1 se sem supplier)
-  par_level:      number        // em base_unit
-  category:       string | null
-  current_qty:    number        // soma dos movimentos em base_unit
-  diff_from_par:  number        // current_qty - par_level (em base_unit)
+  article_id:                      string
+  name:                            string
+  unit:                            string        // base_unit (g, mL, un)
+  stock_unit:                      string        // unidade de contagem; derivada do fornecedor preferido (=unit se sem supplier)
+  base_per_stock:                  number        // base_units por stock_unit (=1 se sem supplier)
+  par_level:                       number        // em base_unit
+  category:                        string | null
+  current_qty:                     number        // soma dos movimentos em base_unit
+  diff_from_par:                   number        // current_qty - par_level (em base_unit)
+  packaging_count:                 number        // nº de embalagens distintas (sizes ∪ suppliers ∪ fallback, deduped)
+  single_packaging_label:          string | null // label da única embalagem (apenas se packaging_count = 1)
+  single_packaging_base_per_unit:  number | null // base_units por 1 embalagem (apenas se packaging_count = 1)
 }
 
 export interface OrderSuggestion {

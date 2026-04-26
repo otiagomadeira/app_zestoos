@@ -22,8 +22,9 @@ export default function InventoryScreen() {
 
   const orgId = useCurrentOrgId()
   const {
-    counted: countedThisSession,
-    skipped: skippedThisSession,
+    counted:   countedThisSession,
+    skipped:   skippedThisSession,
+    sessionId,
     addCounted,
     addSkipped,
   } = useInventorySession(orgId)
@@ -165,12 +166,23 @@ export default function InventoryScreen() {
     }
   }, [selectedArticle, load, advanceToNext, addCounted])
 
-  const handleSkip = useCallback(() => {
-    if (!selectedArticle) return
-    const articleId = selectedArticle.article_id
+  const handleSkip = useCallback((articleId: string) => {
     addSkipped(articleId)
-    advanceToNext(articleId)
-  }, [selectedArticle, advanceToNext, addSkipped])
+    if (articleId === selectedId) advanceToNext(articleId)
+  }, [advanceToNext, addSkipped, selectedId])
+
+  // Callback do InlineCountRow após autosave OK. Marca como contado e
+  // sincroniza o stock local (recarregar mantém current_qty consistente
+  // com base_unit; remontagem do InlineCountRow via key garante reset
+  // controlado do estado interno do hook quando current_qty muda).
+  //
+  // Não dispara saveSuccess banner: o feedback visual ✓/…/! já vive no
+  // próprio card inline (StatusIcon). Banner extra duplicaria o sinal.
+  // Multi-embalagem mantém o seu próprio banner via handleSave.
+  const handleInlineCounted = useCallback((articleId: string) => {
+    addCounted(articleId)
+    void load()
+  }, [addCounted, load])
 
   if (loading) {
     return (
@@ -358,15 +370,18 @@ export default function InventoryScreen() {
                 </div>
               )}
               <ArticleCard
+                key={`${id}:${article.current_qty}:${sessionId ?? 'pending'}`}
                 article={article}
                 isExpanded={selectedId === id}
                 packagings={selectedId === id ? packagings : null}
                 isCounted={countedThisSession.has(id)}
                 isSkipped={skippedThisSession.has(id)}
                 isSaving={savingId === id}
+                sessionId={sessionId}
                 onToggle={() => handleToggle(id)}
                 onSkip={handleSkip}
                 onSave={handleSave}
+                onCounted={handleInlineCounted}
               />
             </div>
           )

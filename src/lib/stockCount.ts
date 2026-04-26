@@ -52,3 +52,30 @@ export async function recordStockCount(
   if (movementId) invalidateCache('current_stock', 'order_suggestions')
   return { saved: movementId !== null, movementId }
 }
+
+// Autosave inline para artigos single-packaging (Fase C1).
+//
+// Idempotente por (article_id, count_session_id): chamadas repetidas dentro
+// da mesma sessão fazem UPDATE in-place no mesmo stock_movement em vez de
+// criar novos. O RPC trata internamente race conditions (apanha
+// unique_violation, faz re-fetch + UPDATE) — cliente não precisa retry.
+//
+// "saved" é sempre true quando não há erro, mesmo que movementId seja null
+// (caso no-op: delta zero e sem movement existente). Isto permite ao card
+// marcar o artigo como contado mesmo quando a contagem coincide com o stock
+// já registado (ex: chef confirma 0 num artigo a zero).
+export async function recordStockCountInline(
+  articleId: string,
+  qty:       number,
+  sessionId: string,
+): Promise<{ saved: boolean; movementId: string | null }> {
+  const { data, error } = await supabase.rpc('record_stock_count_inline', {
+    p_article_id: articleId,
+    p_qty:        qty,
+    p_session_id: sessionId,
+  })
+  if (error) throw error
+  const movementId = (data as string | null) ?? null
+  if (movementId) invalidateCache('current_stock', 'order_suggestions')
+  return { saved: true, movementId }
+}
