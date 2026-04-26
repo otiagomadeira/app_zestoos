@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from 'react'
 
 type Persisted = {
   counted:   string[]
-  skipped:   string[]
   sessionId: string
   updatedAt: string
 }
@@ -41,35 +40,28 @@ function generateSessionId(): string {
 
 type SessionState = {
   counted:   Set<string>
-  skipped:   Set<string>
   sessionId: string | null
   hydrated:  boolean
 }
 
-const EMPTY: SessionState = { counted: new Set(), skipped: new Set(), sessionId: null, hydrated: false }
+const EMPTY: SessionState = { counted: new Set(), sessionId: null, hydrated: false }
 
 /**
  * Sessão de contagem de stock persistida em localStorage por organização e data.
  *
  * Chave: `inventorySession:{orgId}:{yyyy-mm-dd}` — sessão nova ao mudar dia local.
- * Estrutura: `{ counted: string[], skipped: string[], sessionId: uuid, updatedAt: string }`.
+ * Estrutura: `{ counted: string[], sessionId: uuid, updatedAt: string }`.
  *
- * Nesta fase:
- *   - `counted` é alimentado pelo InventoryScreen quando saveStockCount tem sucesso
- *     (e quando o utilizador confirma "marcar como contado sem alterar")
- *   - `skipped` existe na estrutura para suportar A3 (botão "?" / saltar) sem
- *     migração futura — não é alimentado ainda
- *   - `sessionId` identifica a sessão de contagem do dia. É a chave de
- *     idempotência usada por record_stock_count_inline (Fase C1.1) — múltiplos
- *     autosaves no mesmo artigo dentro da mesma sessão fazem UPDATE in-place.
- *     Reutilizado enquanto for o mesmo dia local; novo dia → novo sessionId.
+ * `sessionId` identifica a sessão de contagem do dia. É a chave de
+ * idempotência usada por record_stock_count_inline — múltiplos
+ * autosaves no mesmo artigo dentro da mesma sessão fazem UPDATE in-place.
+ * Reutilizado enquanto for o mesmo dia local; novo dia → novo sessionId.
  *
  * Garantias:
  *   - SSR-safe: nada toca em window/crypto antes do useEffect
  *   - Defensivo: localStorage corrompido → começa limpo, não quebra UI
  *   - Quota cheia / private mode → estado em memória continua, persistência ignorada
- *   - Backwards compatible: payload antigo sem sessionId é hidratado e migrado
- *     para incluir sessionId no próximo persist
+ *   - Tolerante a payloads legacy (campos extra como `skipped` são ignorados)
  */
 
 function readFromStorage(orgId: string | null): SessionState {
@@ -79,7 +71,6 @@ function readFromStorage(orgId: string | null): SessionState {
     if (!raw) {
       return {
         counted:   new Set(),
-        skipped:   new Set(),
         sessionId: generateSessionId(),
         hydrated:  true,
       }
@@ -87,7 +78,6 @@ function readFromStorage(orgId: string | null): SessionState {
     const parsed = JSON.parse(raw) as Partial<Persisted>
     return {
       counted:   new Set(Array.isArray(parsed.counted) ? parsed.counted : []),
-      skipped:   new Set(Array.isArray(parsed.skipped) ? parsed.skipped : []),
       sessionId: typeof parsed.sessionId === 'string' && parsed.sessionId.length > 0
         ? parsed.sessionId
         : generateSessionId(),
@@ -96,7 +86,6 @@ function readFromStorage(orgId: string | null): SessionState {
   } catch {
     return {
       counted:   new Set(),
-      skipped:   new Set(),
       sessionId: generateSessionId(),
       hydrated:  true,
     }
@@ -106,18 +95,14 @@ function readFromStorage(orgId: string | null): SessionState {
 export function useInventorySession(orgId: string | null) {
   const [state, setState] = useState<SessionState>(EMPTY)
 
-  // Sync com localStorage quando orgId muda. Single setState evita cascading
-  // renders — toda a leitura externa é resolvida em readFromStorage e aplicada
-  // num único update por troca de chave (org ou data).
   useEffect(() => { setState(readFromStorage(orgId)) }, [orgId])
 
-  const { counted, skipped, sessionId, hydrated } = state
+  const { counted, sessionId, hydrated } = state
 
-  const persist = useCallback((nextCounted: Set<string>, nextSkipped: Set<string>, sid: string | null) => {
+  const persist = useCallback((nextCounted: Set<string>, sid: string | null) => {
     if (!orgId || typeof window === 'undefined' || !sid) return
     const payload: Persisted = {
       counted:   Array.from(nextCounted),
-      skipped:   Array.from(nextSkipped),
       sessionId: sid,
       updatedAt: new Date().toISOString(),
     }
@@ -132,38 +117,18 @@ export function useInventorySession(orgId: string | null) {
   // antigo não tivesse sessionId, ou o storage estivesse vazio antes).
   useEffect(() => {
     if (!hydrated || !sessionId) return
-    persist(state.counted, state.skipped, sessionId)
-    // Só corre quando sessionId é definido pela primeira vez.
+    persist(state.counted, sessionId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, sessionId])
 
   const addCounted = useCallback((id: string) => {
     setState(prev => {
-      const alreadyCounted = prev.counted.has(id)
-      const wasSkipped     = prev.skipped.has(id)
-      if (alreadyCounted && !wasSkipped) return prev
-      // contar promove um skip → counted (remove da lista de skipped)
-      const nextCounted = alreadyCounted ? prev.counted : new Set(prev.counted).add(id)
-      let nextSkipped = prev.skipped
-      if (wasSkipped) { nextSkipped = new Set(prev.skipped); nextSkipped.delete(id) }
-      persist(nextCounted, nextSkipped, prev.sessionId)
-      return { ...prev, counted: nextCounted, skipped: nextSkipped }
+      if (prev.counted.has(id)) return prev
+      const nextCounted = new Set(prev.counted).add(id)
+      persist(nextCounted, prev.sessionId)
+      return { ...prev, counted: nextCounted }
     })
   }, [persist])
 
-  const addSkipped = useCallback((id: string) => {
-    setState(prev => {
-      const alreadySkipped = prev.skipped.has(id)
-      const wasCounted     = prev.counted.has(id)
-      if (alreadySkipped && !wasCounted) return prev
-      // saltar promove um counted → skipped (remove da lista de counted)
-      const nextSkipped = alreadySkipped ? prev.skipped : new Set(prev.skipped).add(id)
-      let nextCounted = prev.counted
-      if (wasCounted) { nextCounted = new Set(prev.counted); nextCounted.delete(id) }
-      persist(nextCounted, nextSkipped, prev.sessionId)
-      return { ...prev, counted: nextCounted, skipped: nextSkipped }
-    })
-  }, [persist])
-
-  return { counted, skipped, sessionId, hydrated, addCounted, addSkipped }
+  return { counted, sessionId, hydrated, addCounted }
 }

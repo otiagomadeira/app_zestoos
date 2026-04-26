@@ -7,7 +7,6 @@ import { fetchPackagings, recordStockCount, type Packaging, type CountLine } fro
 import { useCurrentOrgId } from '@/hooks/useCurrentOrgId'
 import { useInventorySession } from '@/hooks/useInventorySession'
 import { ARTICLE_CATEGORIES, normalizeCanonicalCategory } from '@/lib/categoryKeywords'
-import { searchMatch } from '@/lib/search'
 import ArticleCard from './ArticleCard'
 
 export default function InventoryScreen() {
@@ -17,22 +16,18 @@ export default function InventoryScreen() {
   const [selectedId,  setSelectedId]  = useState<string | null>(null)
   const [packagings,  setPackagings]  = useState<Packaging[] | null>(null)
   const [savingId,    setSavingId]    = useState<string | null>(null)
-  // Guard síncrono contra double-tap em Guardar.
+  // Guard síncrono contra double-tap em Guardar (multi-embalagem).
   const submitInFlight = useRef(false)
 
   const orgId = useCurrentOrgId()
   const {
     counted:   countedThisSession,
-    skipped:   skippedThisSession,
     sessionId,
     addCounted,
-    addSkipped,
   } = useInventorySession(orgId)
 
-  const [search,              setSearch]              = useState('')
   const [selectedCategory,    setSelectedCategory]    = useState<string | null>(null)
-  const [selectedCountStatus, setSelectedCountStatus] = useState<'uncounted' | 'counted' | 'all'>('uncounted')
-  const [saveSuccess,         setSaveSuccess]         = useState<string | null>(null)
+  const [selectedCountStatus, setSelectedCountStatus] = useState<'uncounted' | 'counted' | 'all'>('all')
   const [saveNoChange,        setSaveNoChange]        = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -50,9 +45,7 @@ export default function InventoryScreen() {
 
   useEffect(() => { load() }, [load])
 
-  // Sempre que muda o artigo seleccionado, refaz o fetch das embalagens.
-  // Limpa primeiro para forçar o sheet a mostrar "A carregar embalagens…"
-  // entre artigos diferentes em vez de exibir as do anterior.
+  // Fetch das embalagens só para multi-embalagem (artigo seleccionado/expandido).
   useEffect(() => {
     if (!selectedId) { setPackagings(null); return }
     let cancelled = false
@@ -65,52 +58,32 @@ export default function InventoryScreen() {
     return () => { cancelled = true }
   }, [selectedId])
 
-  // Lista de chips é fixa (ARTICLE_CATEGORIES). Só calculamos se existem
-  // artigos sem categoria mapeável → mostra chip "Sem categoria".
   const hasUncategorized = useMemo(
     () => articles.some(a => normalizeCanonicalCategory(a.category) === null),
     [articles]
   )
 
-  // Lista exibida = articles → search → categoria → estado.
-  // 'uncounted'  = não-contados (skipped vão ao fim)
-  // 'counted'    = contados nesta sessão
-  // 'all'        = activos → skipped → contados (estado-ortogonal, alfabético dentro)
+  // Lista exibida. Default 'all' = alfabético puro, sem segmentação por estado
+  // (counted aparece in-place com ✓ no card; mantém posição estável durante
+  // toda a sessão para não desaparecer ao guardar).
   const displayed = useMemo(() => {
     const byName = (a: CurrentStock, b: CurrentStock) => a.name.localeCompare(b.name, 'pt')
 
     let pool = articles
-    if (search.trim()) {
-      pool = pool.filter(a => searchMatch(search, a.name))
-    }
     if (selectedCategory === '__none__') {
       pool = pool.filter(a => normalizeCanonicalCategory(a.category) === null)
     } else if (selectedCategory) {
       pool = pool.filter(a => normalizeCanonicalCategory(a.category) === selectedCategory)
     }
 
-    const isCountedSess = (a: CurrentStock) =>
-      countedThisSession.has(a.article_id) && !skippedThisSession.has(a.article_id)
-    const isSkippedSess = (a: CurrentStock) => skippedThisSession.has(a.article_id)
-
     if (selectedCountStatus === 'counted') {
-      return pool.filter(isCountedSess).sort(byName)
+      return pool.filter(a => countedThisSession.has(a.article_id)).sort(byName)
     }
     if (selectedCountStatus === 'uncounted') {
-      const notCounted = pool.filter(a => !countedThisSession.has(a.article_id))
-      const active     = notCounted.filter(a => !isSkippedSess(a)).sort(byName)
-      const skipped    = notCounted.filter(isSkippedSess).sort(byName)
-      return [...active, ...skipped]
+      return pool.filter(a => !countedThisSession.has(a.article_id)).sort(byName)
     }
-    const active  = pool.filter(a =>
-      !countedThisSession.has(a.article_id) && !isSkippedSess(a)
-    ).sort(byName)
-    const skipped = pool.filter(a =>
-      isSkippedSess(a) && !countedThisSession.has(a.article_id)
-    ).sort(byName)
-    const counted = pool.filter(isCountedSess).sort(byName)
-    return [...active, ...skipped, ...counted]
-  }, [articles, search, selectedCategory, selectedCountStatus, countedThisSession, skippedThisSession])
+    return pool.slice().sort(byName)
+  }, [articles, selectedCategory, selectedCountStatus, countedThisSession])
 
   const selectedArticle = useMemo(
     () => articles.find(a => a.article_id === selectedId) ?? null,
@@ -120,21 +93,6 @@ export default function InventoryScreen() {
   const handleToggle = useCallback((id: string) => {
     setSelectedId(prev => prev === id ? null : id)
   }, [])
-
-  const advanceToNext = useCallback((fromId: string) => {
-    const idx = displayed.findIndex(a => a.article_id === fromId)
-    for (let i = idx + 1; i < displayed.length; i++) {
-      const candidate = displayed[i]
-      if (
-        !countedThisSession.has(candidate.article_id) &&
-        !skippedThisSession.has(candidate.article_id)
-      ) {
-        setSelectedId(candidate.article_id)
-        return
-      }
-    }
-    setSelectedId(null)
-  }, [displayed, countedThisSession, skippedThisSession])
 
   const handleSave = useCallback(async (lines: CountLine[]) => {
     if (submitInFlight.current) return
@@ -146,13 +104,9 @@ export default function InventoryScreen() {
     try {
       const result = await recordStockCount(articleId, lines)
       if (result.saved) {
-        // Recarrega para reflectir current_qty actualizado e mover o artigo
-        // para a secção "contados" da sessão.
         await load()
-        setSaveSuccess(articleId)
         addCounted(articleId)
-        setTimeout(() => setSaveSuccess(null), 1500)
-        advanceToNext(articleId)
+        setSelectedId(null)
       } else {
         setSaveNoChange(articleId)
         setTimeout(() => setSaveNoChange(null), 1500)
@@ -164,25 +118,15 @@ export default function InventoryScreen() {
       setSavingId(null)
       submitInFlight.current = false
     }
-  }, [selectedArticle, load, advanceToNext, addCounted])
+  }, [selectedArticle, load, addCounted])
 
-  const handleSkip = useCallback((articleId: string) => {
-    addSkipped(articleId)
-    if (articleId === selectedId) advanceToNext(articleId)
-  }, [advanceToNext, addSkipped, selectedId])
-
-  // Callback do InlineCountRow após autosave OK. Marca como contado e
-  // sincroniza o stock local (recarregar mantém current_qty consistente
-  // com base_unit; remontagem do InlineCountRow via key garante reset
-  // controlado do estado interno do hook quando current_qty muda).
-  //
-  // Não dispara saveSuccess banner: o feedback visual ✓/…/! já vive no
-  // próprio card inline (StatusIcon). Banner extra duplicaria o sinal.
-  // Multi-embalagem mantém o seu próprio banner via handleSave.
+  // Callback do InlineCountRow após autosave OK. Apenas marca como contado;
+  // não recarrega (manter o card no mesmo sítio durante a sessão). O hook
+  // mantém o valor escrito em state interno; current_qty da DB já foi
+  // actualizado pelo autosave para a próxima sessão/refresh.
   const handleInlineCounted = useCallback((articleId: string) => {
     addCounted(articleId)
-    void load()
-  }, [addCounted, load])
+  }, [addCounted])
 
   if (loading) {
     return (
@@ -205,32 +149,32 @@ export default function InventoryScreen() {
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
 
-      <div style={{ padding: '16px 20px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>Contagem de Stock</h2>
-            <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>
-              {articles.length} artigos
-            </p>
+      <div style={{ padding: '12px 20px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <div style={{
+          display:        'flex',
+          alignItems:     'center',
+          justifyContent: 'space-between',
+          gap:            12,
+          marginBottom:   10,
+          minHeight:      'var(--touch-min)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+            <h2 style={{
+              fontSize: 18, fontWeight: 700, color: 'var(--text)', margin: 0,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              Contagem de Stock
+            </h2>
+            <span aria-hidden="true" style={{ fontSize: 14, color: 'var(--text-subtle)' }}>·</span>
+            <span style={{ fontSize: 14, color: 'var(--text-subtle)', fontFamily: 'var(--font-mono), monospace' }}>
+              {articles.length}
+            </span>
           </div>
+          <CountStatusDropdown
+            value={selectedCountStatus}
+            onChange={setSelectedCountStatus}
+          />
         </div>
-        <input
-          type="text"
-          placeholder="Pesquisar artigo…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{
-            width:        '100%',
-            height:       40,
-            background:   'var(--surface)',
-            border:       '1px solid var(--border)',
-            borderRadius: 8,
-            padding:      '0 12px',
-            color:        'var(--text)',
-            fontSize:     14,
-            outline:      'none',
-          }}
-        />
 
         <div
           role="tablist"
@@ -240,7 +184,7 @@ export default function InventoryScreen() {
             gap:                     6,
             overflowX:               'auto',
             overflowY:               'hidden',
-            margin:                  '12px -20px 0',
+            margin:                  '0 -20px',
             padding:                 '0 20px 4px',
             scrollbarWidth:          'none',
             WebkitOverflowScrolling: 'touch',
@@ -263,61 +207,15 @@ export default function InventoryScreen() {
             />
           )}
         </div>
-
-        <div
-          role="tablist"
-          aria-label="Filtrar por estado de contagem"
-          style={{
-            display:      'flex',
-            height:       48,
-            background:   'var(--surface)',
-            borderRadius: 10,
-            border:       '1px solid var(--border)',
-            padding:      2,
-            gap:          2,
-            marginTop:    8,
-          }}
-        >
-          {([
-            { key: 'uncounted', label: 'Por contar' },
-            { key: 'counted',   label: 'Contados'   },
-            { key: 'all',       label: 'Todos'      },
-          ] as const).map(opt => {
-            const active = selectedCountStatus === opt.key
-            return (
-              <button
-                key={opt.key}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setSelectedCountStatus(opt.key)}
-                style={{
-                  flex:         1,
-                  height:       '100%',
-                  borderRadius: 8,
-                  border:       'none',
-                  background:   active ? 'var(--bg)' : 'transparent',
-                  color:        active ? 'var(--text)' : 'var(--text-muted)',
-                  fontSize:     13,
-                  fontWeight:   active ? 700 : 500,
-                  cursor:       'pointer',
-                  touchAction:  'manipulation',
-                }}
-              >
-                {opt.label}
-              </button>
-            )
-          })}
-        </div>
       </div>
 
       <div style={{
         flex:          1,
         overflowY:     'auto',
-        padding:       '12px 16px',
+        padding:       '8px 12px 16px',
         display:       'flex',
         flexDirection: 'column',
-        gap:           8,
+        gap:           6,
         maxWidth:      680,
         width:         '100%',
         alignSelf:     'center',
@@ -339,21 +237,6 @@ export default function InventoryScreen() {
           const id = article.article_id
           return (
             <div key={id}>
-              {saveSuccess === id && (
-                <div style={{
-                  background:   'var(--success-surface)',
-                  border:       '1px solid var(--success-border)',
-                  borderRadius: 8,
-                  padding:      '8px 14px',
-                  color:        'var(--success)',
-                  fontSize:     13,
-                  fontWeight:   600,
-                  textAlign:    'center',
-                  marginBottom: 4,
-                }}>
-                  ✓ Contagem guardada
-                </div>
-              )}
               {saveNoChange === id && (
                 <div style={{
                   background:   'var(--surface)',
@@ -370,16 +253,14 @@ export default function InventoryScreen() {
                 </div>
               )}
               <ArticleCard
-                key={`${id}:${article.current_qty}:${sessionId ?? 'pending'}`}
+                key={`${id}:${sessionId ?? 'pending'}`}
                 article={article}
                 isExpanded={selectedId === id}
                 packagings={selectedId === id ? packagings : null}
                 isCounted={countedThisSession.has(id)}
-                isSkipped={skippedThisSession.has(id)}
                 isSaving={savingId === id}
                 sessionId={sessionId}
                 onToggle={() => handleToggle(id)}
-                onSkip={handleSkip}
                 onSave={handleSave}
                 onCounted={handleInlineCounted}
               />
@@ -387,6 +268,111 @@ export default function InventoryScreen() {
           )
         })}
       </div>
+    </div>
+  )
+}
+
+type CountStatus = 'uncounted' | 'counted' | 'all'
+
+const COUNT_STATUS_LABEL: Record<CountStatus, string> = {
+  all:       'Todos',
+  uncounted: 'Por contar',
+  counted:   'Contados',
+}
+
+function CountStatusDropdown({
+  value,
+  onChange,
+}: {
+  value:    CountStatus
+  onChange: (next: CountStatus) => void
+}) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Filtro: ${COUNT_STATUS_LABEL[value]}`}
+        style={{
+          minHeight:    'var(--touch-min)',
+          padding:      '0 12px',
+          borderRadius: 8,
+          border:       '1px solid var(--border)',
+          background:   'var(--surface)',
+          color:        'var(--text)',
+          fontSize:     13,
+          fontWeight:   600,
+          display:      'flex',
+          alignItems:   'center',
+          gap:          6,
+          cursor:       'pointer',
+          touchAction:  'manipulation',
+          whiteSpace:   'nowrap',
+        }}
+      >
+        <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Filtro:</span>
+        <span>{COUNT_STATUS_LABEL[value]}</span>
+        <span aria-hidden="true" style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 2 }}>▾</span>
+      </button>
+      {open && (
+        <>
+          <div
+            onClick={() => setOpen(false)}
+            aria-hidden="true"
+            style={{ position: 'fixed', inset: 0, zIndex: 50 }}
+          />
+          <div
+            role="menu"
+            style={{
+              position:     'absolute',
+              top:          'calc(100% + 4px)',
+              right:        0,
+              background:   'var(--surface-2)',
+              border:       '1px solid var(--border)',
+              borderRadius: 8,
+              minWidth:     160,
+              zIndex:       51,
+              overflow:     'hidden',
+              boxShadow:    '0 4px 16px var(--border)',
+            }}
+          >
+            {(['all', 'uncounted', 'counted'] as const).map(opt => {
+              const active = opt === value
+              return (
+                <button
+                  key={opt}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { onChange(opt); setOpen(false) }}
+                  style={{
+                    width:      '100%',
+                    minHeight:  44,
+                    padding:    '10px 14px',
+                    background: active ? 'var(--bg)' : 'transparent',
+                    border:     'none',
+                    color:      'var(--text)',
+                    fontSize:   14,
+                    fontWeight: active ? 700 : 500,
+                    textAlign:  'left',
+                    cursor:     'pointer',
+                    display:    'flex',
+                    alignItems: 'center',
+                    gap:        8,
+                  }}
+                >
+                  {active && <span aria-hidden="true" style={{ color: 'var(--success)', fontWeight: 700 }}>✓</span>}
+                  {!active && <span aria-hidden="true" style={{ width: 12, display: 'inline-block' }} />}
+                  {COUNT_STATUS_LABEL[opt]}
+                </button>
+              )
+            })}
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -408,9 +394,8 @@ function CategoryChip({
       onClick={onClick}
       style={{
         flexShrink:   0,
-        height:       'var(--touch-min)',
-        minHeight:    44,
-        padding:      '0 16px',
+        minHeight:    'var(--touch-min)',
+        padding:      '0 14px',
         borderRadius: 22,
         border:       `1px solid ${active ? 'var(--action)' : 'var(--border)'}`,
         background:   active ? 'var(--action-surface)' : 'var(--surface)',

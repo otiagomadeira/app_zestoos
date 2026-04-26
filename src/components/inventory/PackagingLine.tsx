@@ -84,7 +84,7 @@ export default function PackagingLine({
           placeholder="0"
           aria-label={`Quantidade de ${label}`}
           style={{
-            width:        60,
+            width:        72,
             height:       44,
             background:   'var(--bg)',
             border:       '1px solid var(--border)',
@@ -94,7 +94,7 @@ export default function PackagingLine({
             fontSize:     17,
             fontWeight:   700,
             textAlign:    'center',
-            padding:      '0 6px',
+            padding:      '0 8px',
             outline:      'none',
           }}
         />
