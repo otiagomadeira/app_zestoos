@@ -65,8 +65,10 @@ export default function FloatingSearch({ query, onChange }: FloatingSearchProps)
 
   return (
     <>
-      {/* FAB — fixed bottom-right. Quando há query activa, expande para
-          mostrar o termo + botão de limpar (1-toque clear). */}
+      {/* FAB — fixed bottom-right, lifted acima da bottom-nav (56px) do AppShell.
+          A nav mobile vai até ao bottom do viewport (sem safe-area-inset),
+          por isso basta saltar 56 (nav) + 12 (gap) — adicionar env() criaria
+          gap exagerado em iPhones com home indicator. */}
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -74,7 +76,7 @@ export default function FloatingSearch({ query, onChange }: FloatingSearchProps)
         style={{
           position:       'fixed',
           right:          16,
-          bottom:         `calc(16px + env(safe-area-inset-bottom, 0px))`,
+          bottom:         68,
           minHeight:      56,
           minWidth:       56,
           padding:        hasQuery ? '0 8px 0 16px' : 0,
