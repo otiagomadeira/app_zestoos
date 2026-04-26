@@ -65,29 +65,43 @@ const labelStyle: React.CSSProperties = {
   fontSize:      10,
   fontWeight:    700,
   color:         'var(--text-muted)',
-  letterSpacing: '0.1em',
-  marginBottom:  8,
+  letterSpacing: '0.12em',
+  marginBottom:  10,
   display:       'block',
   textTransform: 'uppercase',
 }
 
-// Header de secção (STOCK, FORNECEDORES). Maior peso que labelStyle para
-// criar hierarquia clara entre "secção" e "campo dentro da secção".
-const sectionHeaderStyle: React.CSSProperties = {
-  fontSize:      11,
-  fontWeight:    800,
-  color:         'var(--text)',
-  letterSpacing: '0.12em',
-  marginBottom:  12,
-  marginTop:     8,
-  textTransform: 'uppercase',
-  paddingBottom: 6,
-  borderBottom:  '1px solid var(--border)',
+// Section title com under-mark: pequena linha cor --action de 32px abaixo do
+// texto. Marker tipográfico editorial em vez de border-bottom à largura toda
+// (que se sente administrativo). Usado para STOCK / FORNECEDORES.
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 14, marginTop: 4 }}>
+      <h4 style={{
+        fontSize:      11,
+        fontWeight:    800,
+        color:         'var(--text)',
+        letterSpacing: '0.16em',
+        textTransform: 'uppercase',
+        margin:        0,
+        marginBottom:  6,
+      }}>
+        {children}
+      </h4>
+      <span style={{
+        display:    'block',
+        width:      32,
+        height:     2,
+        background: 'var(--action)',
+        borderRadius: 2,
+      }} />
+    </div>
+  )
 }
 
 const inputStyle: React.CSSProperties = {
   width:        '100%',
-  height:       44,
+  height:       48,
   background:   'var(--surface)',
   border:       '1px solid var(--border)',
   borderRadius: 8,
@@ -96,6 +110,7 @@ const inputStyle: React.CSSProperties = {
   fontSize:     15,
   outline:      'none',
   fontFamily:   'inherit',
+  transition:   'border-color 0.15s, box-shadow 0.15s',
 }
 
 const cellInput: React.CSSProperties = {
@@ -109,6 +124,22 @@ const cellInput: React.CSSProperties = {
   fontSize:     14,
   outline:      'none',
   fontFamily:   'inherit',
+  transition:   'border-color 0.15s, box-shadow 0.15s',
+}
+
+// Estilo para inputs numéricos hero (Stock mínimo, Peso por unidade).
+// Mono font para os números ganharem o peso visual que merecem; o chef
+// procura este número em primeiro lugar quando consulta a ficha.
+const numericInputStyle: React.CSSProperties = {
+  ...inputStyle,
+  width:         140,
+  height:        56,
+  fontSize:      22,
+  fontFamily:    "'JetBrains Mono', monospace",
+  fontWeight:    600,
+  letterSpacing: '-0.01em',
+  textAlign:     'left',
+  paddingRight:  16,
 }
 
 export default function ArticleForm({ existing, articles, onSaved, onCancel }: Props) {
@@ -368,76 +399,122 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Header — chevron de voltar + eyebrow + título. Tom contínuo com
-          o resto da app (cream); antes era dark e isolava o painel. */}
+      {/* Estilos scoped — focus rings, hover do chevron e do save CTA.
+          Inline porque são :pseudo-classes que CSS-in-JS não suporta
+          directamente, e o pattern (style block local) já existe em
+          InventoryScreen para keyframes. */}
+      <style>{`
+        .zesto-form-input:focus,
+        .zesto-form-cell:focus,
+        .zesto-form-num:focus {
+          border-color: var(--action);
+          box-shadow: 0 0 0 4px var(--action-glow);
+        }
+        .zesto-back-btn:hover {
+          background: var(--action-glow);
+          color: var(--action);
+        }
+        .zesto-back-btn:active {
+          transform: scale(0.94);
+        }
+        .zesto-save-cta {
+          box-shadow: 0 6px 16px rgba(196, 106, 45, 0.28),
+                      0 1px 0 rgba(168, 88, 34, 0.6) inset;
+        }
+        .zesto-save-cta:hover:not(:disabled) {
+          background: var(--action-hover);
+          transform: translateY(-1px);
+          box-shadow: 0 10px 22px rgba(196, 106, 45, 0.34),
+                      0 1px 0 rgba(168, 88, 34, 0.6) inset;
+        }
+        .zesto-save-cta:active:not(:disabled) {
+          transform: translateY(0);
+          box-shadow: 0 3px 10px rgba(196, 106, 45, 0.22),
+                      0 1px 0 rgba(168, 88, 34, 0.6) inset;
+        }
+      `}</style>
+
+      {/* Header editorial — chevron borderless, eyebrow tracked com middle
+          dot acentuado, título Playfair como protagonista. Sente-se como o
+          topo de uma página de caderno de receitas, não um header de form. */}
       <div style={{
-        flexShrink:    0,
-        padding:       '20px 24px 16px',
-        borderBottom:  '1px solid var(--border)',
-        display:       'flex',
-        alignItems:    'center',
-        gap:           14,
+        flexShrink: 0,
+        padding:    '24px 28px 22px',
+        display:    'flex',
+        alignItems: 'flex-start',
+        gap:        16,
       }}>
         <button
           type="button"
           onClick={handleCancel}
           aria-label="Voltar"
+          className="zesto-back-btn"
           style={{
             width:          'var(--touch-min)',
             height:         'var(--touch-min)',
-            borderRadius:   10,
-            border:         '1px solid var(--border)',
-            background:     'var(--surface)',
+            borderRadius:   '50%',
+            border:         'none',
+            background:     'transparent',
             color:          'var(--text-muted)',
-            fontSize:       20,
+            fontSize:       22,
             cursor:         'pointer',
             display:        'flex',
             alignItems:     'center',
             justifyContent: 'center',
             flexShrink:     0,
+            marginTop:      4,
             touchAction:    'manipulation',
-            transition:     'border-color 0.15s, color 0.15s',
+            transition:     'background 0.18s, color 0.18s, transform 0.18s',
           }}
         >
           ←
         </button>
         <div style={{ minWidth: 0, flex: 1 }}>
           <p style={{
-            fontSize:      10,
-            color:         'var(--text-subtle)',
-            letterSpacing: '0.14em',
+            fontSize:      9,
+            color:         'var(--action)',
+            letterSpacing: '0.22em',
             fontWeight:    700,
             margin:        0,
-            marginBottom:  3,
+            marginBottom:  6,
             textTransform: 'uppercase',
           }}>
-            {isEdit ? 'Editar artigo' : 'Novo artigo'}
+            {isEdit ? 'Editar' : 'Novo'} <span style={{ color: 'var(--text-subtle)', margin: '0 4px' }}>·</span> Artigo
           </p>
           <h3 style={{
             fontFamily:    "'Playfair Display', serif",
-            fontSize:      24,
+            fontSize:      30,
             fontWeight:    600,
             color:         'var(--text)',
             margin:        0,
             whiteSpace:    'nowrap',
             overflow:      'hidden',
             textOverflow:  'ellipsis',
-            letterSpacing: '-0.015em',
-            lineHeight:    1.15,
+            letterSpacing: '-0.02em',
+            lineHeight:    1.1,
           }}>
             {isEdit ? existing.name : 'Novo Artigo'}
           </h3>
         </div>
       </div>
 
-      {/* Body — gap mais generoso e padding lateral 24px para respirar */}
+      {/* Hairline separator — refined, 1px, full-width pelo padding lateral
+          do corpo. Substitui o borderBottom no header (que estava colado). */}
+      <div style={{
+        flexShrink: 0,
+        height:     1,
+        background: 'var(--border)',
+        margin:     '0 28px',
+      }} />
+
+      {/* Body — gap generoso, padding lateral 28px para alinhar com header */}
       <div style={{
         flex:          1,
         overflowY:     'auto',
         display:       'flex',
         flexDirection: 'column',
-        gap:           20,
-        padding:       '20px 24px 8px',
+        gap:           24,
+        padding:       '24px 28px 12px',
       }}>
 
         {/* Name */}
@@ -470,7 +547,16 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             }}
             onBlur={handleNameBlur}
             onKeyDown={e => { if (e.key === 'Enter' && name.trim()) handleSave() }}
-            style={inputStyle}
+            className="zesto-form-input"
+            style={{
+              ...inputStyle,
+              height:        56,
+              fontSize:      18,
+              fontFamily:    "'Playfair Display', serif",
+              fontWeight:    500,
+              letterSpacing: '-0.01em',
+              padding:       '0 16px',
+            }}
           />
           {duplicateWarning && (
             <p style={{ fontSize: 11, color: 'var(--warning)', marginTop: 4 }}>
@@ -507,14 +593,14 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           <div>
             <label style={labelStyle}>UNIDADE</label>
             <div style={{
-              display:      'flex',
+              display:      'inline-flex',
+              padding:      4,
+              borderRadius: 12,
+              background:   'var(--surface)',
               border:       '1px solid var(--border)',
-              borderRadius: 8,
-              overflow:     'hidden',
-              background:   'var(--bg)',
-              width:        'fit-content',
+              gap:          2,
             }}>
-              {(['g', 'mL', 'un'] as const).map((u, i) => {
+              {(['g', 'mL', 'un'] as const).map((u) => {
                 const isSelected = unit === u
                 return (
                   <button
@@ -533,18 +619,20 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                       }
                     }}
                     style={{
-                      minWidth:    64,
-                      height:      44,
-                      padding:     '0 18px',
-                      border:      'none',
-                      borderLeft:  i > 0 ? '1px solid var(--border)' : 'none',
-                      background:  isSelected ? 'var(--action)' : 'transparent',
-                      color:       isSelected ? 'var(--text-on-primary)' : 'var(--text)',
-                      fontFamily:  'JetBrains Mono, monospace',
-                      fontSize:    14,
-                      fontWeight:  isSelected ? 700 : 500,
-                      cursor:      'pointer',
-                      transition:  'background 0.15s, color 0.15s',
+                      minWidth:      60,
+                      height:        40,
+                      padding:       '0 18px',
+                      border:        'none',
+                      borderRadius:  8,
+                      background:    isSelected ? 'var(--action)' : 'transparent',
+                      color:         isSelected ? 'var(--text-on-primary)' : 'var(--text-muted)',
+                      fontFamily:    "'JetBrains Mono', monospace",
+                      fontSize:      14,
+                      fontWeight:    isSelected ? 700 : 500,
+                      letterSpacing: '0.02em',
+                      cursor:        'pointer',
+                      transition:    'background 0.18s, color 0.18s, box-shadow 0.18s',
+                      boxShadow:     isSelected ? '0 2px 8px rgba(196, 106, 45, 0.3)' : 'none',
                     }}
                   >
                     {u}
@@ -560,17 +648,15 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             artigo se conta à unidade (un) e é necessário para fichas
             técnicas em gramas. */}
         <div>
-          <h4 style={sectionHeaderStyle}>STOCK</h4>
+          <SectionTitle>Stock</SectionTitle>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {/* Stock mínimo — input na unidade do chef (caixa, frasco,
                 garrafão); par_level continua guardado em base_unit. Fonte
                 de unidade: link preferred → qualquer link válido → seed
                 do parser → base_unit. */}
             <div>
-              <label style={labelStyle}>
-                STOCK MÍNIMO (em {parMinUnit ?? unit})
-              </label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <label style={labelStyle}>STOCK MÍNIMO</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <input
                   type="number"
                   min="0"
@@ -588,20 +674,32 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                     }
                     setIsDirty(true)
                   }}
-                  style={{ ...inputStyle, width: '40%' }}
+                  className="zesto-form-num"
+                  style={numericInputStyle}
                 />
+                <span style={{
+                  fontSize:      13,
+                  fontWeight:    600,
+                  color:         'var(--text-muted)',
+                  fontFamily:    "'JetBrains Mono', monospace",
+                  letterSpacing: '0.04em',
+                  flexShrink:    0,
+                }}>
+                  {parMinUnit ?? unit}
+                </span>
                 {parUseOrderUnit && (parseFloat(parLevel) || 0) > 0 && (
                   <span style={{
                     fontSize:   12,
                     color:      'var(--text-subtle)',
-                    fontFamily: 'JetBrains Mono, monospace',
+                    fontFamily: "'JetBrains Mono', monospace",
                     flexShrink: 0,
+                    marginLeft: 'auto',
                   }}>
                     ≈ {formatStockQty(parseFloat(parLevel), unit)}
                   </span>
                 )}
               </div>
-              <p style={{ fontSize: 10, color: 'var(--text-subtle)', marginTop: 3 }}>
+              <p style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 8, lineHeight: 1.5 }}>
                 Quando o stock baixar deste valor, o Zesto sugere encomenda.
               </p>
             </div>
@@ -614,35 +712,47 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
               const outOfRange = hasValue && (gNum < 5 || gNum > 2000)
               return (
                 <div>
-                  <label style={labelStyle}>PESO POR UNIDADE (g)</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <label style={labelStyle}>PESO POR UNIDADE</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <input
                       type="number"
                       min="0.01"
                       step="any"
-                      placeholder="ex: 52"
+                      placeholder="0"
                       value={gPerUnit}
                       onChange={e => { setGPerUnit(e.target.value); unmarkAuto('gPerUnit'); setIsDirty(true) }}
-                      style={{ ...inputStyle, width: '40%' }}
+                      className="zesto-form-num"
+                      style={numericInputStyle}
                     />
+                    <span style={{
+                      fontSize:      13,
+                      fontWeight:    600,
+                      color:         outOfRange ? 'var(--warning)' : 'var(--text-muted)',
+                      fontFamily:    "'JetBrains Mono', monospace",
+                      letterSpacing: '0.04em',
+                      flexShrink:    0,
+                    }}>
+                      g
+                    </span>
                     {hasValue && (
                       <span style={{
-                        fontSize:    12,
-                        color:       outOfRange ? 'var(--warning)' : 'var(--text-subtle)',
-                        fontFamily:  'JetBrains Mono, monospace',
-                        flexShrink:  0,
+                        fontSize:   12,
+                        color:      outOfRange ? 'var(--warning)' : 'var(--text-subtle)',
+                        fontFamily: "'JetBrains Mono', monospace",
+                        flexShrink: 0,
+                        marginLeft: 'auto',
                       }}>
                         1 un ≈ {gNum} g
                       </span>
                     )}
                   </div>
                   {outOfRange && (
-                    <p style={{ fontSize: 11, color: 'var(--warning)', marginTop: 6, marginBottom: 0 }}>
+                    <p style={{ fontSize: 11, color: 'var(--warning)', marginTop: 8, marginBottom: 0, lineHeight: 1.5 }}>
                       Valor fora do esperado (5–2000g) — confirma se correto.
                     </p>
                   )}
                   {!gPerUnit && (
-                    <p style={{ fontSize: 10, color: 'var(--text-subtle)', marginTop: 3, marginBottom: 0 }}>
+                    <p style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 8, marginBottom: 0, lineHeight: 1.5 }}>
                       Necessário para usar gramas nas fichas técnicas (ex: 150g ovos).
                     </p>
                   )}
@@ -654,7 +764,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
 
         {/* Supplier links */}
         <div>
-          <h4 style={sectionHeaderStyle}>FORNECEDORES</h4>
+          <SectionTitle>Fornecedores</SectionTitle>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {links.map(link => {
               // Aviso de inconsistência: mesmo order_unit, conversion_factor diferente
@@ -721,7 +831,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                       type="number" min="0" step="any" placeholder="0.00"
                       value={link.price}
                       onChange={e => { updateLink(link.key, { price: e.target.value }); setIsDirty(true) }}
-                      style={cellInput}
+                      className="zesto-form-cell" style={cellInput}
                     />
                   </div>
                   <div style={{ flex: 1 }}>
@@ -750,7 +860,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                         if (autoFillMsg?.key === link.key) setAutoFillMsg(null)
                       }}
                       onBlur={e => updateLink(link.key, { order_unit: e.target.value.trim().toLowerCase() })}
-                      style={cellInput}
+                      className="zesto-form-cell" style={cellInput}
                     />
                     <datalist id={`units-order-link-${link.key}`}>
                       {ORDER_UNITS.map(u => <option key={u} value={u} />)}
@@ -813,7 +923,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                           setIsDirty(true)
                           if (autoFillMsg?.key === link.key) setAutoFillMsg(null)
                         }}
-                        style={cellInput}
+                        className="zesto-form-cell" style={cellInput}
                       />
                     </div>
                     {conversionMismatch && (
@@ -831,7 +941,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                       placeholder="Ref. fornecedor (opcional)"
                       value={link.supplier_ref}
                       onChange={e => { updateLink(link.key, { supplier_ref: e.target.value }); setIsDirty(true) }}
-                      style={cellInput}
+                      className="zesto-form-cell" style={cellInput}
                     />
                   </div>
                 )}
@@ -935,31 +1045,31 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
         )}
       </div>
 
-      {/* Footer — só Guardar. O voltar/cancelar já está claro no header
-          (chevron ←); duplicar no rodapé era ruído. */}
+      {/* Footer floating — sombra subtle em cima em vez de border duro,
+          dá profundidade de toolbar elevada sem ruído visual. */}
       <div style={{
-        padding:    '12px 24px 20px',
-        borderTop:  '1px solid var(--border)',
+        padding:    '14px 28px 22px',
         background: 'var(--bg)',
+        boxShadow:  '0 -10px 20px -12px rgba(28, 20, 10, 0.08)',
         flexShrink: 0,
       }}>
         <button
           onClick={handleSave}
           disabled={saving}
+          className="zesto-save-cta"
           style={{
             width:         '100%',
-            height:        52,
-            borderRadius:  10,
+            height:        56,
+            borderRadius:  12,
             border:        'none',
             background:    'var(--action)',
             color:         'var(--text-on-primary)',
             fontSize:      15,
             fontWeight:    600,
-            letterSpacing: '0.01em',
+            letterSpacing: '0.02em',
             cursor:        saving ? 'default' : 'pointer',
             opacity:       saving ? 0.7 : 1,
-            transition:    'background 0.15s, opacity 0.15s',
-            boxShadow:     saving ? 'none' : '0 1px 0 rgba(168, 88, 34, 0.5)',
+            transition:    'background 0.18s, transform 0.18s, box-shadow 0.18s, opacity 0.15s',
           }}
         >
           {saving ? 'A guardar…' : isEdit ? 'Guardar Alterações' : 'Guardar Artigo'}
@@ -995,8 +1105,8 @@ function CategoryField({
           gap:                     6,
           overflowX:               'auto',
           overflowY:               'hidden',
-          margin:                  '0 -20px',
-          padding:                 '0 20px 4px',
+          margin:                  '0 -28px',
+          padding:                 '0 28px 4px',
           scrollbarWidth:          'none',
           WebkitOverflowScrolling: 'touch',
         }}
@@ -1013,16 +1123,19 @@ function CategoryField({
               style={{
                 flexShrink:   0,
                 minHeight:    'var(--touch-min)',
-                padding:      '0 14px',
-                borderRadius: 22,
+                padding:      '0 16px',
+                borderRadius: 24,
                 border:       `1px solid ${isSelected ? 'var(--action)' : 'var(--border)'}`,
                 background:   isSelected ? 'var(--action)' : 'var(--surface)',
                 color:        isSelected ? 'var(--text-on-primary)' : 'var(--text-muted)',
                 fontSize:     13,
                 fontWeight:   isSelected ? 600 : 500,
+                letterSpacing: isSelected ? '0.01em' : 0,
                 whiteSpace:   'nowrap',
                 cursor:       'pointer',
                 touchAction:  'manipulation',
+                boxShadow:    isSelected ? '0 4px 12px rgba(196, 106, 45, 0.25)' : 'none',
+                transition:   'box-shadow 0.18s, background 0.15s',
               }}
             >
               {cat}
@@ -1035,9 +1148,9 @@ function CategoryField({
           style={{
             flexShrink:   0,
             minHeight:    'var(--touch-min)',
-            padding:      '0 14px',
-            borderRadius: 22,
-            border:       `1px dashed var(--border)`,
+            padding:      '0 16px',
+            borderRadius: 24,
+            border:       '1px dashed var(--border)',
             background:   showCustom && !isStandard ? 'var(--action-surface)' : 'transparent',
             color:        showCustom && !isStandard ? 'var(--action)' : 'var(--text-subtle)',
             fontSize:     13,
@@ -1057,17 +1170,19 @@ function CategoryField({
           value={isStandard ? '' : value}
           onChange={e => onChange(e.target.value)}
           autoFocus
+          className="zesto-form-input"
           style={{
-            marginTop:    8,
+            marginTop:    10,
             width:        '100%',
-            height:       40,
+            height:       44,
             background:   'var(--surface)',
             border:       '1px solid var(--border)',
             borderRadius: 8,
-            padding:      '0 12px',
+            padding:      '0 14px',
             color:        'var(--text)',
             fontSize:     14,
             outline:      'none',
+            transition:   'border-color 0.15s, box-shadow 0.15s',
           }}
         />
       )}
