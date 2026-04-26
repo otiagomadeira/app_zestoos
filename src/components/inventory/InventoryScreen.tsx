@@ -6,8 +6,8 @@ import { fetchCurrentStock } from '@/lib/supabase'
 import { fetchPackagings, recordStockCount, type Packaging, type CountLine } from '@/lib/stockCount'
 import { useCurrentOrgId } from '@/hooks/useCurrentOrgId'
 import { useInventorySession } from '@/hooks/useInventorySession'
+import { ARTICLE_CATEGORIES, normalizeCanonicalCategory } from '@/lib/categoryKeywords'
 import ArticleCard from './ArticleCard'
-import CountSheet from './CountSheet'
 
 export default function InventoryScreen() {
   const [articles,    setArticles]    = useState<CurrentStock[]>([])
@@ -27,9 +27,11 @@ export default function InventoryScreen() {
     addSkipped,
   } = useInventorySession(orgId)
 
-  const [search,       setSearch]       = useState('')
-  const [saveSuccess,  setSaveSuccess]  = useState<string | null>(null)
-  const [saveNoChange, setSaveNoChange] = useState<string | null>(null)
+  const [search,              setSearch]              = useState('')
+  const [selectedCategory,    setSelectedCategory]    = useState<string | null>(null)
+  const [selectedCountStatus, setSelectedCountStatus] = useState<'uncounted' | 'counted' | 'all'>('uncounted')
+  const [saveSuccess,         setSaveSuccess]         = useState<string | null>(null)
+  const [saveNoChange,        setSaveNoChange]        = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -61,48 +63,69 @@ export default function InventoryScreen() {
     return () => { cancelled = true }
   }, [selectedId])
 
-  const filtered = useMemo(() =>
-    articles.filter(a =>
-      a.name.toLowerCase().includes(search.toLowerCase()) ||
-      (a.category ?? '').toLowerCase().includes(search.toLowerCase())
-    ),
-    [articles, search]
+  // Lista de chips é fixa (ARTICLE_CATEGORIES). Só calculamos se existem
+  // artigos sem categoria mapeável → mostra chip "Sem categoria".
+  const hasUncategorized = useMemo(
+    () => articles.some(a => normalizeCanonicalCategory(a.category) === null),
+    [articles]
   )
 
-  const sortedFiltered = useMemo(() => {
-    const byName    = (a: CurrentStock, b: CurrentStock) => a.name.localeCompare(b.name, 'pt')
-    const isHandled = (a: CurrentStock) =>
-      countedThisSession.has(a.article_id) || skippedThisSession.has(a.article_id)
-    const active    = filtered.filter(a => !isHandled(a))
-    const skipped   = filtered.filter(a => skippedThisSession.has(a.article_id))
-    const counted   = filtered.filter(a =>
+  // Lista exibida = articles → search → categoria → estado.
+  // 'uncounted'  = não-contados (skipped vão ao fim)
+  // 'counted'    = contados nesta sessão
+  // 'all'        = activos → skipped → contados (estado-ortogonal, alfabético dentro)
+  const displayed = useMemo(() => {
+    const byName = (a: CurrentStock, b: CurrentStock) => a.name.localeCompare(b.name, 'pt')
+    const q = search.toLowerCase()
+
+    let pool = articles
+    if (q) {
+      pool = pool.filter(a =>
+        a.name.toLowerCase().includes(q) || (a.category ?? '').toLowerCase().includes(q)
+      )
+    }
+    if (selectedCategory === '__none__') {
+      pool = pool.filter(a => normalizeCanonicalCategory(a.category) === null)
+    } else if (selectedCategory) {
+      pool = pool.filter(a => normalizeCanonicalCategory(a.category) === selectedCategory)
+    }
+
+    const isCountedSess = (a: CurrentStock) =>
       countedThisSession.has(a.article_id) && !skippedThisSession.has(a.article_id)
-    )
-    const belowPar  = active.filter(a => a.current_qty < a.par_level)
-    const abovePar  = active.filter(a => a.current_qty >= a.par_level)
-    return [
-      ...belowPar.sort(byName),
-      ...abovePar.sort(byName),
-      ...skipped.sort(byName),
-      ...counted.sort(byName),
-    ]
-  }, [filtered, countedThisSession, skippedThisSession])
+    const isSkippedSess = (a: CurrentStock) => skippedThisSession.has(a.article_id)
+
+    if (selectedCountStatus === 'counted') {
+      return pool.filter(isCountedSess).sort(byName)
+    }
+    if (selectedCountStatus === 'uncounted') {
+      const notCounted = pool.filter(a => !countedThisSession.has(a.article_id))
+      const active     = notCounted.filter(a => !isSkippedSess(a)).sort(byName)
+      const skipped    = notCounted.filter(isSkippedSess).sort(byName)
+      return [...active, ...skipped]
+    }
+    const active  = pool.filter(a =>
+      !countedThisSession.has(a.article_id) && !isSkippedSess(a)
+    ).sort(byName)
+    const skipped = pool.filter(a =>
+      isSkippedSess(a) && !countedThisSession.has(a.article_id)
+    ).sort(byName)
+    const counted = pool.filter(isCountedSess).sort(byName)
+    return [...active, ...skipped, ...counted]
+  }, [articles, search, selectedCategory, selectedCountStatus, countedThisSession, skippedThisSession])
 
   const selectedArticle = useMemo(
     () => articles.find(a => a.article_id === selectedId) ?? null,
     [articles, selectedId],
   )
 
-  const handleSelect = (id: string) => {
+  const handleToggle = useCallback((id: string) => {
     setSelectedId(prev => prev === id ? null : id)
-  }
-
-  const handleClose = useCallback(() => { setSelectedId(null) }, [])
+  }, [])
 
   const advanceToNext = useCallback((fromId: string) => {
-    const idx = sortedFiltered.findIndex(a => a.article_id === fromId)
-    for (let i = idx + 1; i < sortedFiltered.length; i++) {
-      const candidate = sortedFiltered[i]
+    const idx = displayed.findIndex(a => a.article_id === fromId)
+    for (let i = idx + 1; i < displayed.length; i++) {
+      const candidate = displayed[i]
       if (
         !countedThisSession.has(candidate.article_id) &&
         !skippedThisSession.has(candidate.article_id)
@@ -112,7 +135,7 @@ export default function InventoryScreen() {
       }
     }
     setSelectedId(null)
-  }, [sortedFiltered, countedThisSession, skippedThisSession])
+  }, [displayed, countedThisSession, skippedThisSession])
 
   const handleSave = useCallback(async (lines: CountLine[]) => {
     if (submitInFlight.current) return
@@ -201,6 +224,84 @@ export default function InventoryScreen() {
             outline:      'none',
           }}
         />
+
+        <div
+          role="tablist"
+          aria-label="Filtrar por categoria"
+          style={{
+            display:                 'flex',
+            gap:                     6,
+            overflowX:               'auto',
+            overflowY:               'hidden',
+            margin:                  '12px -20px 0',
+            padding:                 '0 20px 4px',
+            scrollbarWidth:          'none',
+            WebkitOverflowScrolling: 'touch',
+          }}
+        >
+          <CategoryChip label="Todas" active={selectedCategory === null} onClick={() => setSelectedCategory(null)} />
+          {ARTICLE_CATEGORIES.map(c => (
+            <CategoryChip
+              key={c}
+              label={c}
+              active={selectedCategory === c}
+              onClick={() => setSelectedCategory(c)}
+            />
+          ))}
+          {hasUncategorized && (
+            <CategoryChip
+              label="Sem categoria"
+              active={selectedCategory === '__none__'}
+              onClick={() => setSelectedCategory('__none__')}
+            />
+          )}
+        </div>
+
+        <div
+          role="tablist"
+          aria-label="Filtrar por estado de contagem"
+          style={{
+            display:      'flex',
+            height:       48,
+            background:   'var(--surface)',
+            borderRadius: 10,
+            border:       '1px solid var(--border)',
+            padding:      2,
+            gap:          2,
+            marginTop:    8,
+          }}
+        >
+          {([
+            { key: 'uncounted', label: 'Por contar' },
+            { key: 'counted',   label: 'Contados'   },
+            { key: 'all',       label: 'Todos'      },
+          ] as const).map(opt => {
+            const active = selectedCountStatus === opt.key
+            return (
+              <button
+                key={opt.key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setSelectedCountStatus(opt.key)}
+                style={{
+                  flex:         1,
+                  height:       '100%',
+                  borderRadius: 8,
+                  border:       'none',
+                  background:   active ? 'var(--bg)' : 'transparent',
+                  color:        active ? 'var(--text)' : 'var(--text-muted)',
+                  fontSize:     13,
+                  fontWeight:   active ? 700 : 500,
+                  cursor:       'pointer',
+                  touchAction:  'manipulation',
+                }}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       <div style={{
@@ -220,12 +321,14 @@ export default function InventoryScreen() {
             {error}
           </div>
         )}
-        {filtered.length === 0 && (
+        {displayed.length === 0 && (
           <div style={{ textAlign: 'center', color: 'var(--text-subtle)', paddingTop: 40, fontSize: 14 }}>
-            Nenhum artigo encontrado
+            {selectedCountStatus === 'uncounted' && countedThisSession.size > 0
+              ? 'Tudo contado nesta sessão.'
+              : 'Nenhum artigo encontrado'}
           </div>
         )}
-        {sortedFiltered.map(article => {
+        {displayed.map(article => {
           const id = article.article_id
           return (
             <div key={id}>
@@ -262,28 +365,54 @@ export default function InventoryScreen() {
               <ArticleCard
                 article={article}
                 isExpanded={selectedId === id}
+                packagings={selectedId === id ? packagings : null}
                 isCounted={countedThisSession.has(id)}
                 isSkipped={skippedThisSession.has(id)}
                 isSaving={savingId === id}
-                onClick={() => handleSelect(id)}
+                onToggle={() => handleToggle(id)}
+                onSkip={handleSkip}
+                onSave={handleSave}
               />
             </div>
           )
         })}
       </div>
-
-      {selectedArticle && (
-        <CountSheet
-          articleName={selectedArticle.name}
-          baseUnit={selectedArticle.unit}
-          currentQty={selectedArticle.current_qty}
-          packagings={packagings}
-          saving={savingId === selectedArticle.article_id}
-          onClose={handleClose}
-          onSkip={handleSkip}
-          onSave={handleSave}
-        />
-      )}
     </div>
+  )
+}
+
+function CategoryChip({
+  label,
+  active,
+  onClick,
+}: {
+  label:    string
+  active:   boolean
+  onClick:  () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      style={{
+        flexShrink:   0,
+        height:       'var(--touch-min)',
+        minHeight:    44,
+        padding:      '0 16px',
+        borderRadius: 22,
+        border:       `1px solid ${active ? 'var(--action)' : 'var(--border)'}`,
+        background:   active ? 'var(--action-surface)' : 'var(--surface)',
+        color:        active ? 'var(--action)' : 'var(--text-muted)',
+        fontSize:     13,
+        fontWeight:   active ? 600 : 500,
+        whiteSpace:   'nowrap',
+        cursor:       'pointer',
+        touchAction:  'manipulation',
+      }}
+    >
+      {label}
+    </button>
   )
 }

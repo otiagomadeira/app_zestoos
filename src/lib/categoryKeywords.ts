@@ -239,6 +239,28 @@ export const ARTICLE_CATEGORIES = [
   'Embalagens e Descartáveis',
 ] as const
 
+// ── Normalização canónica ────────────────────────────────────────────────────
+// Mapeia categorias legadas (singulares ou subdivididas) para a canónica.
+// SSOT de mapeamento — adicionar aqui qualquer nova alias antiga em vez de
+// inferir lowercase/fuzzy. Inputs desconhecidos retornam null para que o UI
+// caia em "Sem categoria" — sujidade fica visível em vez de ser disfarçada.
+const LEGACY_CATEGORY_MAP: Record<string, string> = {
+  'Peixe':       'Peixe e Marisco',
+  'Legumes':     'Frutas e Legumes',
+  'Frutas':      'Frutas e Legumes',
+  'Lacticínios': 'Lacticínios e Ovos',
+  'Ovos':        'Lacticínios e Ovos',
+  'Conservas':   'Mercearia',
+  'Especiarias': 'Mercearia',
+  'Enchidos':    'Carnes',
+}
+
+export function normalizeCanonicalCategory(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  if ((ARTICLE_CATEGORIES as readonly string[]).includes(raw)) return raw
+  return LEGACY_CATEGORY_MAP[raw] ?? null
+}
+
 // ── Tipo de resultado ─────────────────────────────────────────────────────────
 
 export type CategoryResult = {
