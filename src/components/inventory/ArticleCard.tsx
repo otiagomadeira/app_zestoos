@@ -86,6 +86,14 @@ export default function ArticleCard({
         borderRadius: 10,
         overflow:     'hidden',
         transition:   'border-color 0.15s, background 0.15s',
+        // CRÍTICO: o outer é flex item de uma lista flex-column. Sem min-height
+        // explícito o flex-shrink:1 default deixa o outer encolher abaixo dos
+        // 56px do inner role=button (em iOS Safari isto colapsa para 2px =
+        // apenas borders). flexShrink:0 trava qualquer tentativa de shrinking;
+        // minHeight:56 é segurança extra. InlineCountRow não sofria do bug
+        // porque o seu conteúdo intrinsic (input 44 + buttons) excede 56.
+        minHeight:    56,
+        flexShrink:   0,
       }}
     >
       <div
