@@ -16,6 +16,7 @@ import { buildArticleDraft, formatDraftHint, getCountingMode, getCountingModeOpt
 import { parseProductLines } from '../src/lib/parseProductLines'
 import { parsePackagingQuantity, type ArticleBaseUnit } from '../src/lib/units'
 import { getSuggestedUnitWeight } from '../src/lib/unitWeightSuggestions'
+import { assessConfidence, type ConfidenceLevel, type ConfidenceReason } from '../src/lib/articleConfidence'
 
 type Expect = {
   name?:             string
@@ -30,6 +31,8 @@ type Expect = {
   intent?:           ArticleIntent['kind']
   intentOrderUnit?:  string
   intentFactor?:     number
+  confidence?:       ConfidenceLevel
+  reasons?:          ConfidenceReason[]
 }
 
 type Case = {
@@ -202,6 +205,26 @@ const CASES: Case[] = [
   { tag: 'REGRESSION', input: 'Camembert',
     expect: { category: 'Lacticínios e Ovos' } },
 
+  // ── Congelado/fresco como adjetivo do nome (não categoria própria) ─
+  // Decisão de produto: "Congelados" deixa de ser categoria. "congelado",
+  // "fresco" e "refrigerado" preservam-se no nome porque distinguem
+  // produtos operacionalmente diferentes (perna fresca ≠ perna congelada),
+  // mas a categoria é decidida pelo ingrediente base.
+  { tag: 'CRITICAL', input: 'perna de frango congelada caixa 10kg',
+    expect: { name: 'Perna de Frango Congelada', unit: 'g', category: 'Carnes',
+              orderUnit: 'caixa', conversionFactor: 10000 } },
+  { tag: 'CRITICAL', input: 'perna de frango fresca caixa 5kg',
+    expect: { name: 'Perna de Frango Fresca', unit: 'g', category: 'Carnes',
+              orderUnit: 'caixa', conversionFactor: 5000 } },
+  { tag: 'CRITICAL', input: 'perna de frango congelada caixa 15kg',
+    expect: { name: 'Perna de Frango Congelada', unit: 'g', category: 'Carnes',
+              orderUnit: 'caixa', conversionFactor: 15000 } },
+  { tag: 'REGRESSION', input: 'salmão congelado 1kg',
+    expect: { name: 'Salmão Congelado', unit: 'g', category: 'Peixe e Marisco' } },
+  { tag: 'REGRESSION', input: 'ervilhas congeladas saco 500g',
+    expect: { name: 'Ervilhas Congeladas', unit: 'g', category: 'Frutas e Legumes',
+              orderUnit: 'saco', conversionFactor: 500 } },
+
   // ── Categoria accent-insensitive: input do chef sem acentos ────────
   { tag: 'REGRESSION', input: 'feijao seco saco 5kg',
     expect: { category: 'Mercearia', orderUnit: 'saco', conversionFactor: 5000 } },
@@ -290,6 +313,83 @@ const CASES: Case[] = [
     expect: { name: 'Leite', unit: 'mL', intent: 'PACKAGED_VOLUME',
               orderUnit: 'caixa', conversionFactor: 1000,
               intentOrderUnit: 'caixa', intentFactor: 1000 } },
+
+  // ── Camada de confiança v1: confidence + reasons ────────────────────────
+  // 3 níveis (high/medium/low) + lista frozen de 6 reasons. LOW pede revisão
+  // ao chef; medium não interrompe form mas marca dot subtil em bulk import.
+  // Regra de agregação NÃO worst-of-three: ver src/lib/articleConfidence.ts.
+
+  // ── HIGH (9 casos do spec) ──
+  { tag: 'CRITICAL', input: 'frango 10kg',
+    expect: { confidence: 'high', reasons: [] } },
+  { tag: 'CRITICAL', input: 'frango caixa 10kg',
+    expect: { confidence: 'high', reasons: [] } },
+  { tag: 'CRITICAL', input: 'leite 1L pack 6uni',
+    expect: { confidence: 'high', reasons: [] } },
+  { tag: 'CRITICAL', input: 'ovos caixa 180 uni',
+    expect: { confidence: 'high', reasons: [] } },
+  { tag: 'CRITICAL', input: 'lata 2.5kg tomate pelado',
+    expect: { confidence: 'high', reasons: [] } },
+  { tag: 'CRITICAL', input: 'molho inglês',
+    expect: { confidence: 'high', reasons: [] } },
+  { tag: 'CRITICAL', input: 'molho madeira',
+    expect: { confidence: 'high', reasons: [] } },
+  { tag: 'CRITICAL', input: 'molho ostra',
+    expect: { confidence: 'high', reasons: [] } },
+  { tag: 'CRITICAL', input: 'molho peixe',
+    expect: { confidence: 'high', reasons: [] } },
+
+  // ── LOW (9 casos do spec) ──
+  // Códigos puros: nome curto / alfanumérico → name_is_code (hard-low).
+  // category_uncertain dispara em consequência (não há keyword conhecida).
+  { tag: 'CRITICAL', input: 'COD123',
+    expect: { confidence: 'low', reasons: ['name_is_code', 'category_uncertain'] } },
+  { tag: 'CRITICAL', input: 'ART.456',
+    expect: { confidence: 'low', reasons: ['name_is_code', 'category_uncertain'] } },
+  { tag: 'CRITICAL', input: 'REF9988',
+    expect: { confidence: 'low', reasons: ['name_is_code', 'category_uncertain'] } },
+  { tag: 'CRITICAL', input: 'CX6',
+    expect: { confidence: 'low', reasons: ['name_is_code', 'category_uncertain'] } },
+  // Embalagem que parece comida: container word stripped sem qty + categoria
+  // fraca → product_name_lost_risk + category_uncertain → LOW.
+  { tag: 'CRITICAL', input: 'caixa pizza',
+    expect: { confidence: 'low' } },
+  // Descartável kraft no input → possible_disposable (hard-low).
+  { tag: 'CRITICAL', input: 'caixa hambúrguer kraft',
+    expect: { confidence: 'low' } },
+  // Saco vácuo → possible_disposable + product_name_lost_risk → LOW.
+  { tag: 'CRITICAL', input: 'saco vácuo',
+    expect: { confidence: 'low' } },
+  // Container word como nome único → name_too_generic (hard-low).
+  { tag: 'CRITICAL', input: 'caixa',
+    expect: { confidence: 'low' } },
+  { tag: 'CRITICAL', input: 'pacote',
+    expect: { confidence: 'low' } },
+
+  // ── MEDIUM (6 casos: 1 sinal não-hard) ──
+  // Categoria incerta sozinha → MEDIUM (regra crítica do spec). Nome aceitável
+  // (não é code, não é genérico, sem descartável), unidade inferida por
+  // fallback → category_uncertain só.
+  { tag: 'CRITICAL', input: 'mistura especiarias',
+    expect: { confidence: 'medium', reasons: ['category_uncertain'] } },
+  // Embalagem detectada sem qty + nome com categoria conhecida →
+  // intent_uncertain só (não trigga product_name_lost_risk porque categoria
+  // não é fraca).
+  { tag: 'CRITICAL', input: 'arroz saco',
+    expect: { confidence: 'medium', reasons: ['intent_uncertain'] } },
+  { tag: 'CRITICAL', input: 'azeite garrafa',
+    expect: { confidence: 'medium', reasons: ['intent_uncertain'] } },
+  // Nome desconhecido isolado (sem container, sem descartável, sem qty) →
+  // category_uncertain só.
+  { tag: 'CRITICAL', input: 'xpto',
+    expect: { confidence: 'medium', reasons: ['category_uncertain'] } },
+  // Nomes de molho que NÃO estão em PRIORITY_KEYWORDS — categoria cai em
+  // Mercearia confidente (palavra "molho" no INGREDIENT_KEYWORDS Mercearia).
+  // Não há sinal → HIGH. Confirmação que molho holandês/barbecue ficam HIGH.
+  { tag: 'REGRESSION', input: 'molho holandês',
+    expect: { confidence: 'high', reasons: [] } },
+  { tag: 'REGRESSION', input: 'molho barbecue',
+    expect: { confidence: 'high', reasons: [] } },
 ]
 
 let pass = 0
@@ -350,6 +450,14 @@ for (const c of CASES) {
     if (got !== c.expect.intentFactor) {
       errs.push(`intent.factor: esperado ${c.expect.intentFactor} obteve ${got}`)
     }
+  }
+  if (c.expect.confidence !== undefined && d.confidence !== c.expect.confidence) {
+    errs.push(`confidence: esperado "${c.expect.confidence}" obteve "${d.confidence}" (reasons: [${d.confidenceReasons.join(', ')}])`)
+  }
+  if (c.expect.reasons !== undefined) {
+    const got  = [...d.confidenceReasons].sort().join(',')
+    const want = [...c.expect.reasons].sort().join(',')
+    if (got !== want) errs.push(`reasons: esperado [${want}] obteve [${got}]`)
   }
 
   if (errs.length === 0) {
@@ -783,6 +891,164 @@ for (const c of SUG_CASES) {
     console.log(`  ✗  [SUG] ${JSON.stringify(c.name)}`)
     console.log(`        esperado ${c.expected}, obteve ${got}`)
     failures.push(`SUG ${c.name}`)
+  }
+}
+
+// ── assessConfidence: cobertura directa de cada reason ──────────────────────
+//
+// Independente do parser — passa argumentos sintéticos e verifica que cada
+// reason dispara/não-dispara como esperado, e que a regra de agregação
+// (NÃO worst-of-three) está correta.
+
+console.log('\n── assessConfidence (puro) ──')
+
+type AssessExpected = { confidence: ConfidenceLevel; reasons: ConfidenceReason[] }
+type AssessCase = {
+  label:    string
+  args:     Parameters<typeof assessConfidence>[0]
+  expected: AssessExpected
+}
+
+const ASSESS_DIRECT_CASES: AssessCase[] = [
+  // 0 sinais → HIGH
+  { label: 'nome limpo + intent packaged + categoria confiante → HIGH',
+    args: { rawInput: 'frango caixa 10kg', finalName: 'Frango', category: 'Carnes',
+            categoryConfident: true,
+            intent: { kind: 'PACKAGED_WEIGHT', orderUnit: 'caixa', basePerOrder: 10000 },
+            trace: { strippedPackagingNoQty: false }, detectedLabel: 'caixa', detectedQty: 10000 },
+    expected: { confidence: 'high', reasons: [] } },
+
+  // 1 sinal não-hard → MEDIUM
+  { label: 'category null sozinho → MEDIUM',
+    args: { rawInput: 'xpto', finalName: 'Xpto', category: null,
+            categoryConfident: false,
+            intent: { kind: 'WEIGHT_LOOSE' },
+            trace: { strippedPackagingNoQty: false } },
+    expected: { confidence: 'medium', reasons: ['category_uncertain'] } },
+
+  { label: 'detectedLabel sem factor (intent loose) → MEDIUM',
+    args: { rawInput: 'arroz saco', finalName: 'Arroz', category: 'Mercearia',
+            categoryConfident: true,
+            intent: { kind: 'WEIGHT_LOOSE' },
+            trace: { strippedPackagingNoQty: false }, detectedLabel: 'saco' },
+    expected: { confidence: 'medium', reasons: ['intent_uncertain'] } },
+
+  // 1 sinal hard → LOW
+  { label: 'name_is_code sozinho → LOW',
+    args: { rawInput: 'COD123', finalName: 'Cod123', category: 'Mercearia',
+            categoryConfident: true, // simulado: isolar só o sinal de código
+            intent: { kind: 'WEIGHT_LOOSE' },
+            trace: { strippedPackagingNoQty: false } },
+    expected: { confidence: 'low', reasons: ['name_is_code'] } },
+
+  { label: 'name_too_generic sozinho → LOW',
+    args: { rawInput: 'caixa', finalName: 'Caixa', category: 'Embalagens e Descartáveis',
+            categoryConfident: true,
+            intent: { kind: 'WEIGHT_LOOSE' },
+            trace: { strippedPackagingNoQty: false } },
+    expected: { confidence: 'low', reasons: ['name_too_generic'] } },
+
+  { label: 'possible_disposable sozinho → LOW',
+    args: { rawInput: 'kraft', finalName: 'Kraft', category: 'Embalagens e Descartáveis',
+            categoryConfident: true,
+            intent: { kind: 'WEIGHT_LOOSE' },
+            trace: { strippedPackagingNoQty: false } },
+    expected: { confidence: 'low', reasons: ['possible_disposable'] } },
+
+  { label: 'product_name_lost_risk + category null → LOW (3 sinais)',
+    args: { rawInput: 'caixa pizza', finalName: 'Pizza', category: null,
+            categoryConfident: false,
+            intent: { kind: 'WEIGHT_LOOSE' },
+            trace: { strippedPackagingNoQty: true } },
+    expected: { confidence: 'low',
+                reasons: ['product_name_lost_risk', 'category_uncertain', 'intent_uncertain'] } },
+
+  // 2+ sinais não-hard → LOW
+  { label: 'category_uncertain + intent_uncertain → LOW (regra 2+ sinais)',
+    args: { rawInput: 'bla saco', finalName: 'Bla', category: null,
+            categoryConfident: false,
+            intent: { kind: 'WEIGHT_LOOSE' },
+            trace: { strippedPackagingNoQty: false }, detectedLabel: 'saco' },
+    expected: { confidence: 'low', reasons: ['category_uncertain', 'intent_uncertain'] } },
+
+  // Composto papel — só conta nos compostos aprovados
+  { label: 'papel sozinho NÃO dispara possible_disposable',
+    args: { rawInput: 'mel papel', finalName: 'Mel Papel', category: 'Mercearia',
+            categoryConfident: true,
+            intent: { kind: 'WEIGHT_LOOSE' },
+            trace: { strippedPackagingNoQty: false } },
+    expected: { confidence: 'high', reasons: [] } },
+
+  { label: 'papel mãos DISPARA possible_disposable',
+    args: { rawInput: 'papel mãos rolo', finalName: 'Papel Mãos Rolo', category: null,
+            categoryConfident: false,
+            intent: { kind: 'WEIGHT_LOOSE' },
+            trace: { strippedPackagingNoQty: false } },
+    expected: { confidence: 'low', reasons: ['possible_disposable', 'category_uncertain'] } },
+
+  // product_name_lost_risk NÃO dispara quando categoria é forte; mas
+  // strippedPackagingNoQty + intent loose → intent_uncertain (1 sinal não-hard
+  // → MEDIUM). "frango caixa" sem peso é razoavelmente medium: chef indicou
+  // packaging mas não tamanho.
+  { label: 'frango caixa: strippedPackagingNoQty + categoria forte → MEDIUM (intent_uncertain só)',
+    args: { rawInput: 'frango caixa', finalName: 'Frango', category: 'Carnes',
+            categoryConfident: true,
+            intent: { kind: 'WEIGHT_LOOSE' },
+            trace: { strippedPackagingNoQty: true } },
+    expected: { confidence: 'medium', reasons: ['intent_uncertain'] } },
+]
+
+for (const c of ASSESS_DIRECT_CASES) {
+  const got = assessConfidence(c.args)
+  const gotReasons  = [...got.reasons].sort().join(',')
+  const wantReasons = [...c.expected.reasons].sort().join(',')
+  const ok = got.confidence === c.expected.confidence && gotReasons === wantReasons
+  if (ok) {
+    pass++
+    console.log(`  ✓  [CONF] ${c.label}`)
+  } else {
+    fail++
+    console.log(`  ✗  [CONF] ${c.label}`)
+    console.log(`        esperado ${c.expected.confidence} [${wantReasons}]`)
+    console.log(`        obteve   ${got.confidence} [${gotReasons}]`)
+    failures.push(c.label)
+  }
+}
+
+// ── normalizedKey: produtos com adjetivo distintivo são artigos diferentes ──
+//
+// Invariant de produto: "congelado"/"fresco" no nome distinguem dois artigos
+// reais. Se a normalização colapsasse o adjetivo, a dedup tratava-os como o
+// mesmo artigo e a cozinha perdia a distinção operacional. Os testes principais
+// já cobrem `name` distinto; este bloco fixa explicitamente que `normalizedKey`
+// também difere — qualquer refactor a `normalizeName`/`normalizeKey` que junte
+// adjetivos falha aqui antes de chegar à UI.
+
+console.log('\n── normalizedKey (dedup com adjetivo) ──')
+
+const DEDUP_PAIRS: Array<{ label: string; a: string; b: string }> = [
+  { label: 'Perna de Frango Congelada ≠ Perna de Frango Fresca',
+    a: 'perna de frango congelada caixa 10kg',
+    b: 'perna de frango fresca caixa 5kg' },
+  { label: 'Salmão Congelado ≠ Salmão Fresco',
+    a: 'salmão congelado 1kg',
+    b: 'salmão fresco 1kg' },
+]
+
+for (const c of DEDUP_PAIRS) {
+  const da = buildArticleDraft(c.a)
+  const db = buildArticleDraft(c.b)
+  if (da.normalizedKey !== db.normalizedKey) {
+    pass++
+    console.log(`  ✓  [DEDUP] ${c.label}`)
+    console.log(`        a="${da.name}" key="${da.normalizedKey}"`)
+    console.log(`        b="${db.name}" key="${db.normalizedKey}"`)
+  } else {
+    fail++
+    console.log(`  ✗  [DEDUP] ${c.label}`)
+    console.log(`        ambos colapsaram em key="${da.normalizedKey}"`)
+    console.log(`        a.name="${da.name}" b.name="${db.name}"`)
+    failures.push(c.label)
   }
 }
 
