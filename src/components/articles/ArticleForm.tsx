@@ -7,7 +7,10 @@ import {
   fetchAllSuppliers, fetchArticleSuppliers, saveArticleSuppliers,
   createArticleSizeIfMissing,
 } from '@/lib/supabase'
-import { ORDER_UNITS, formatUnit, formatStockQty } from '@/lib/units'
+import {
+  ORDER_UNITS, formatStockQty, formatBaseQty,
+  parsePackagingQuantity, packagingHelperText,
+} from '@/lib/units'
 import { ARTICLE_CATEGORIES } from '@/lib/categoryKeywords'
 import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
 import { normalizeArticleInput } from '@/lib/normalizeArticle'
@@ -165,6 +168,10 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   // Campos preenchidos automaticamente (parser ou heurística). Limpos quando user edita.
   // Keys: 'gPerUnit' | `orderUnit_${linkKey}` | `conv_${linkKey}`
   const [autoFilled,         setAutoFilled]         = useState<Set<string>>(new Set())
+  // Erros de parse "Cada embalagem traz" por link. Set on blur, clear on next change.
+  // O input aceita linguagem de cozinha ("10kg", "2,5L") e parsePackagingQuantity
+  // valida contra a unit do artigo. Erros NÃO bloqueiam digitação — só blur/save.
+  const [convErrors,         setConvErrors]         = useState<Record<string, string>>({})
 
   const { aliases, learnAlias } = useOrgAliases()
   const rawNameRef              = useRef(existing?.name ?? '')
@@ -214,12 +221,16 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
     return next
   })
 
-  // Formata um conversion_factor (sempre em base unit) para display.
-  // Comparações e cálculos usam sempre o valor bruto em número.
+  // Formata um conversion_factor (input em "linguagem de cozinha") para
+  // display canónico. Round-trip via parsePackagingQuantity → formatBaseQty:
+  //   "10kg" → 10000 → "10 kg"
+  //   "5L"   → 5000  → "5 L"
+  //   "180"  → 180   → "180 un"
+  // Se não parsar (lixo), devolve raw inalterado para o user editar.
   const fmtFactor = (raw: string) => {
-    const n = parseFloat(raw)
-    if (!n) return raw
-    return formatUnit(n, unit)
+    const parsed = parsePackagingQuantity(raw, unit)
+    if (parsed.ok) return formatBaseQty(parsed.value, unit)
+    return raw
   }
 
   const handleNameBlur = () => {
@@ -270,7 +281,10 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           supplier_ref:      r.supplier_ref ?? '',
           price:             String(r.price),
           order_unit:        r.order_unit,
-          conversion_factor: String(r.conversion_factor),
+          // DB guarda em base_unit (10000 para 10kg). Display em "linguagem
+          // de cozinha" via formatBaseQty: 10000 → "10 kg", 5000 → "5 L",
+          // 180 → "180 un". parsePackagingQuantity faz round-trip seguro.
+          conversion_factor: formatBaseQty(r.conversion_factor, (existing.unit ?? 'g') as 'g' | 'mL' | 'un'),
           is_preferred:      r.is_preferred,
         }))))
         .catch(() => {})
@@ -301,8 +315,15 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   const setPreferred = (key: string) =>
     setLinks(prev => prev.map(l => ({ ...l, is_preferred: l.key === key })))
 
-  const removeLink = (key: string) =>
+  const removeLink = (key: string) => {
     setLinks(prev => prev.filter(l => l.key !== key))
+    setConvErrors(prev => {
+      if (!prev[key]) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
 
   const handleSave = async () => {
     if (!name.trim()) return setError('Nome é obrigatório')
@@ -312,6 +333,33 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
     const validLinks = links.filter(l =>
       l.supplier_id && parseFloat(l.price) > 0 && l.order_unit.trim()
     )
+
+    // Validar "Cada embalagem traz" para cada link válido. Vazio ou exactamente
+    // "1" é OK (cai para 1 base_unit por embalagem — semântica preservada).
+    // Qualquer outra coisa tem que parsar contra a unit do artigo.
+    const parsedFactors: Record<string, number> = {}
+    for (const link of validLinks) {
+      const raw = link.conversion_factor.trim()
+      if (raw === '' || raw === '1') {
+        parsedFactors[link.key] = 1
+        continue
+      }
+      const parsed = parsePackagingQuantity(raw, unit)
+      if (!parsed.ok) {
+        const supplierName = suppliers.find(s => s.id === link.supplier_id)?.name ?? 'desconhecido'
+        const reason = parsed.reason === 'INCOMPATIBLE_UNIT'
+          ? 'esta quantidade não combina com a unidade do artigo'
+          : 'formato inválido'
+        setConvErrors(prev => ({
+          ...prev,
+          [link.key]: parsed.reason === 'INCOMPATIBLE_UNIT'
+            ? 'Esta quantidade não combina com a unidade do artigo.'
+            : 'Formato inválido. ' + packagingHelperText(unit) + '.',
+        }))
+        return setError(`Embalagem do fornecedor "${supplierName}": ${reason}.`)
+      }
+      parsedFactors[link.key] = parsed.value
+    }
 
     setSaving(true)
     setError(null)
@@ -339,7 +387,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
         supplier_ref:      l.supplier_ref.trim() || null,
         price:             parseFloat(l.price),
         order_unit:        l.order_unit.trim(),
-        conversion_factor: parseFloat(l.conversion_factor) || 1,
+        conversion_factor: parsedFactors[l.key] ?? 1,
         is_preferred:      validLinks.length === 1 ? true : l.is_preferred,
       })))
 
@@ -753,20 +801,21 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           <SectionTitle>Fornecedores</SectionTitle>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {links.map(link => {
-              // Aviso de inconsistência: mesmo order_unit, conversion_factor diferente
-              const currentFactor = parseFloat(link.conversion_factor)
+              // Aviso de inconsistência: mesmo order_unit, conversion_factor diferente.
+              // Comparação em base_unit via parsePackagingQuantity (estado armazena
+              // texto humano "10kg", não número raw).
+              const currentParsed = parsePackagingQuantity(link.conversion_factor, unit)
               const refLink = link.order_unit.trim()
-                ? links.find(l =>
-                    l.key !== link.key &&
-                    l.order_unit.trim() === link.order_unit.trim() &&
-                    parseFloat(l.conversion_factor) > 0
-                  )
+                ? links.find(l => {
+                    if (l.key === link.key || l.order_unit.trim() !== link.order_unit.trim()) return false
+                    const p = parsePackagingQuantity(l.conversion_factor, unit)
+                    return p.ok && p.value > 0
+                  })
                 : undefined
+              const refParsed = refLink ? parsePackagingQuantity(refLink.conversion_factor, unit) : null
               const conversionMismatch =
-                refLink &&
-                currentFactor > 0 &&
-                parseFloat(refLink.conversion_factor) !== currentFactor
-                  ? `Este artigo já usa 1 ${refLink.order_unit} = ${fmtFactor(refLink.conversion_factor)} noutro fornecedor`
+                currentParsed.ok && refParsed?.ok && refParsed.value !== currentParsed.value
+                  ? `Este artigo já usa 1 ${refLink!.order_unit} = ${formatBaseQty(refParsed.value, unit)} noutro fornecedor`
                   : null
 
               return (
@@ -824,8 +873,9 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                     <label style={{
                       fontSize: 10, color: 'var(--text-subtle)',
                       display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2,
+                      letterSpacing: '0.08em', fontWeight: 700, textTransform: 'uppercase',
                     }}>
-                      <span>UN. COMPRA</span>
+                      <span>Compra em</span>
                       {autoFilled.has(`orderUnit_${link.key}`) && (
                         <span style={{
                           fontFamily:    'JetBrains Mono, monospace',
@@ -867,7 +917,72 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                   </p>
                 )}
 
-                {/* Row 3: advanced toggle */}
+                {/* "Cada embalagem traz" — visível por defeito (deixou de
+                    estar atrás de toggle). Aceita linguagem de cozinha
+                    ("10kg", "2,5L", "180") via parsePackagingQuantity.
+                    Validação só on blur/save — não interrompe digitação. */}
+                <div>
+                  <label style={{
+                    fontSize: 10, color: 'var(--text-subtle)',
+                    display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2,
+                    letterSpacing: '0.08em', fontWeight: 700, textTransform: 'uppercase',
+                  }}>
+                    <span>Cada embalagem traz</span>
+                    {autoFilled.has(`conv_${link.key}`) && (
+                      <span style={{
+                        fontFamily:    'JetBrains Mono, monospace',
+                        letterSpacing: '0.05em',
+                        color:         'var(--text-subtle)',
+                        fontWeight:    400,
+                      }}>·auto</span>
+                    )}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={packagingHelperText(unit).replace('Ex: ', '').split(',')[0]}
+                    value={link.conversion_factor}
+                    onChange={e => {
+                      updateLink(link.key, { conversion_factor: e.target.value })
+                      unmarkAuto(`conv_${link.key}`)
+                      setIsDirty(true)
+                      if (autoFillMsg?.key === link.key) setAutoFillMsg(null)
+                      // Limpa erro on next change — chef recomeçou a editar.
+                      if (convErrors[link.key]) {
+                        setConvErrors(prev => { const n = {...prev}; delete n[link.key]; return n })
+                      }
+                    }}
+                    onBlur={e => {
+                      const raw = e.target.value.trim()
+                      if (!raw || raw === '1') return  // default OK, sem validação
+                      const parsed = parsePackagingQuantity(raw, unit)
+                      if (!parsed.ok) {
+                        setConvErrors(prev => ({
+                          ...prev,
+                          [link.key]: parsed.reason === 'INCOMPATIBLE_UNIT'
+                            ? 'Esta quantidade não combina com a unidade do artigo.'
+                            : 'Formato inválido. ' + packagingHelperText(unit) + '.',
+                        }))
+                      }
+                    }}
+                    className="zesto-form-cell" style={cellInput}
+                  />
+                  {/* Erro inline tem prioridade sobre helper e mismatch. */}
+                  {convErrors[link.key] ? (
+                    <p style={{ fontSize: 11, color: 'var(--error)', margin: '4px 0 0', lineHeight: 1.4 }}>
+                      {convErrors[link.key]}
+                    </p>
+                  ) : conversionMismatch ? (
+                    <p style={{ fontSize: 10, color: 'var(--warning)', fontFamily: "'JetBrains Mono', monospace", margin: '4px 0 0' }}>
+                      {conversionMismatch}
+                    </p>
+                  ) : (
+                    <p style={{ fontSize: 10, color: 'var(--text-subtle)', margin: '4px 0 0' }}>
+                      {packagingHelperText(unit)}
+                    </p>
+                  )}
+                </div>
+
+                {/* Toggle só para Referência — único campo opcional. */}
                 <button
                   type="button"
                   onClick={() => setExpandedLinks(prev => {
@@ -877,59 +992,17 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                   })}
                   style={{ background: 'none', border: 'none', padding: 0, color: 'var(--text-subtle)', fontSize: 11, cursor: 'pointer', textAlign: 'left', letterSpacing: '0.04em' }}
                 >
-                  {expandedLinks.has(link.key) ? '▾ Ocultar' : '› Qtd. por embalagem e referência'}
+                  {expandedLinks.has(link.key) ? '▾ Ocultar referência' : '› Referência (opcional)'}
                 </button>
 
-                {/* Row 4: advanced fields */}
                 {expandedLinks.has(link.key) && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 4, borderTop: '1px solid var(--border)' }}>
-                    <div style={{ flex: 1 }}>
-                      <label style={{
-                        fontSize: 10, color: 'var(--text-subtle)',
-                        display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2,
-                      }}>
-                        <span>{link.order_unit.trim()
-                          ? `Quantas ${unit || 'unidades'} vêm por ${link.order_unit.trim()}?`
-                          : 'QTD. POR EMBALAGEM'}</span>
-                        {autoFilled.has(`conv_${link.key}`) && (
-                          <span style={{
-                            fontFamily:    'JetBrains Mono, monospace',
-                            letterSpacing: '0.05em',
-                            color:         'var(--text-subtle)',
-                            fontWeight:    400,
-                          }}>·auto</span>
-                        )}
-                      </label>
-                      <input
-                        type="number" min="0.01" step="any" placeholder="ex: 6"
-                        value={link.conversion_factor}
-                        onChange={e => {
-                          updateLink(link.key, { conversion_factor: e.target.value })
-                          unmarkAuto(`conv_${link.key}`)
-                          setIsDirty(true)
-                          if (autoFillMsg?.key === link.key) setAutoFillMsg(null)
-                        }}
-                        className="zesto-form-cell" style={cellInput}
-                      />
-                    </div>
-                    {conversionMismatch && (
-                      <p style={{
-                        fontSize:   10,
-                        color:      'var(--warning)',
-                        fontFamily: 'JetBrains Mono, monospace',
-                        margin:     0,
-                      }}>
-                        {conversionMismatch}
-                      </p>
-                    )}
-                    <input
-                      type="text"
-                      placeholder="Ref. fornecedor (opcional)"
-                      value={link.supplier_ref}
-                      onChange={e => { updateLink(link.key, { supplier_ref: e.target.value }); setIsDirty(true) }}
-                      className="zesto-form-cell" style={cellInput}
-                    />
-                  </div>
+                  <input
+                    type="text"
+                    placeholder="Ref. fornecedor (opcional)"
+                    value={link.supplier_ref}
+                    onChange={e => { updateLink(link.key, { supplier_ref: e.target.value }); setIsDirty(true) }}
+                    className="zesto-form-cell" style={cellInput}
+                  />
                 )}
               </div>
               )
@@ -940,7 +1013,6 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             onClick={() => {
               const seed       = parsedSeedRef.current?.supplierSeed
               const link       = emptyLink()
-              let autoExpand   = false
               let msg          = ''
 
               const autoFields: string[] = []
@@ -950,12 +1022,14 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                   autoFields.push(`orderUnit_${link.key}`)
                 }
                 if (seed.conversion_factor != null) {
-                  link.conversion_factor = String(seed.conversion_factor)
-                  autoExpand = true
+                  // Seed do parser dá número raw em base_unit (ex: 1000 para
+                  // "1kg"). Formatar para "linguagem de cozinha" antes de pôr
+                  // no input — o chef vê "1 kg", não "1000".
+                  link.conversion_factor = formatBaseQty(seed.conversion_factor, unit)
                   autoFields.push(`conv_${link.key}`)
                 }
 
-                const hasConversion = link.conversion_factor !== '1'
+                const hasConversion = link.conversion_factor !== '1' && link.conversion_factor !== ''
                 const hasPackaging  = !!link.order_unit
                 if (hasPackaging && hasConversion) {
                   msg = `Auto: 1 ${link.order_unit} = ${fmtFactor(link.conversion_factor)}`
@@ -967,7 +1041,6 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
               }
 
               setLinks(prev => [...prev, link])
-              if (autoExpand) setExpandedLinks(prev => new Set([...prev, link.key]))
               if (autoFields.length > 0) {
                 setAutoFilled(prev => new Set([...prev, ...autoFields]))
               }

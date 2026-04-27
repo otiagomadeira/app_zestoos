@@ -14,6 +14,7 @@
 
 import { buildArticleDraft, formatDraftHint } from '../src/lib/articleDraft'
 import { parseProductLines } from '../src/lib/parseProductLines'
+import { parsePackagingQuantity, type ArticleBaseUnit } from '../src/lib/units'
 
 type Expect = {
   name?:             string
@@ -242,6 +243,101 @@ for (const c of PL_CASES) {
     console.log(`  ✗  [PARSED-LINE] ${c.input}`)
     for (const e of errs) console.log(`        ${e}`)
     failures.push(c.input)
+  }
+}
+
+// ── parsePackagingQuantity (linguagem de cozinha → base_unit) ────────────────
+//
+// Cobre o spec do campo "Cada embalagem traz" do bloco de fornecedor:
+//   chef escreve "10kg" → guarda 10000 (em base_unit g)
+//   chef escreve "5L"   → guarda 5000  (em base_unit mL)
+//   chef escreve "180"  → guarda 180   (em base_unit un)
+//
+// Casos OK + casos INCOMPATIBLE_UNIT (família errada) + INVALID (lixo).
+
+console.log('\n── parsePackagingQuantity ──')
+
+type PkgCase = {
+  input: string
+  unit:  ArticleBaseUnit
+  expected:
+    | { ok: true;  value: number }
+    | { ok: false; reason: 'INCOMPATIBLE_UNIT' | 'INVALID' }
+}
+
+const PKG_CASES: PkgCase[] = [
+  // ── unit=g: peso em todas as formas ──────────────────────────────────
+  { input: '10kg',       unit: 'g', expected: { ok: true, value: 10000 } },
+  { input: '10 kg',      unit: 'g', expected: { ok: true, value: 10000 } },
+  { input: '10000g',     unit: 'g', expected: { ok: true, value: 10000 } },
+  { input: '10000gr',    unit: 'g', expected: { ok: true, value: 10000 } },
+  { input: '10000 g',    unit: 'g', expected: { ok: true, value: 10000 } },
+  { input: '2,5kg',      unit: 'g', expected: { ok: true, value: 2500 } },
+  { input: '2.5kg',      unit: 'g', expected: { ok: true, value: 2500 } },
+  { input: '3k',         unit: 'g', expected: { ok: true, value: 3000 } },
+  { input: '3kg',        unit: 'g', expected: { ok: true, value: 3000 } },
+  { input: '500g',       unit: 'g', expected: { ok: true, value: 500 } },
+  { input: '500',        unit: 'g', expected: { ok: true, value: 500 } },
+  { input: '500 gramas', unit: 'g', expected: { ok: true, value: 500 } },
+
+  // ── unit=mL: volume em todas as formas ───────────────────────────────
+  { input: '5L',     unit: 'mL', expected: { ok: true, value: 5000 } },
+  { input: '5 l',    unit: 'mL', expected: { ok: true, value: 5000 } },
+  { input: '5000ml', unit: 'mL', expected: { ok: true, value: 5000 } },
+  { input: '2,5L',   unit: 'mL', expected: { ok: true, value: 2500 } },
+  { input: '2.5L',   unit: 'mL', expected: { ok: true, value: 2500 } },
+  { input: '750ml',  unit: 'mL', expected: { ok: true, value: 750 } },
+  { input: '33cl',   unit: 'mL', expected: { ok: true, value: 330 } },
+  { input: '5dl',    unit: 'mL', expected: { ok: true, value: 500 } },
+  { input: '750',    unit: 'mL', expected: { ok: true, value: 750 } },
+
+  // ── unit=un: contagem ────────────────────────────────────────────────
+  { input: '6un',         unit: 'un', expected: { ok: true, value: 6 } },
+  { input: '6 un',        unit: 'un', expected: { ok: true, value: 6 } },
+  { input: '12uni',       unit: 'un', expected: { ok: true, value: 12 } },
+  { input: '180 unidades',unit: 'un', expected: { ok: true, value: 180 } },
+  { input: '180',         unit: 'un', expected: { ok: true, value: 180 } },
+
+  // ── INCOMPATIBLE_UNIT: família errada ────────────────────────────────
+  { input: '5L',   unit: 'g',  expected: { ok: false, reason: 'INCOMPATIBLE_UNIT' } },
+  { input: '10kg', unit: 'mL', expected: { ok: false, reason: 'INCOMPATIBLE_UNIT' } },
+  { input: '10kg', unit: 'un', expected: { ok: false, reason: 'INCOMPATIBLE_UNIT' } },
+  { input: '5L',   unit: 'un', expected: { ok: false, reason: 'INCOMPATIBLE_UNIT' } },
+  { input: '6un',  unit: 'g',  expected: { ok: false, reason: 'INCOMPATIBLE_UNIT' } },
+  { input: '6un',  unit: 'mL', expected: { ok: false, reason: 'INCOMPATIBLE_UNIT' } },
+
+  // ── INVALID: lixo, vazio, zero, formato impossível ───────────────────
+  { input: '',        unit: 'g',  expected: { ok: false, reason: 'INVALID' } },
+  { input: 'abc',     unit: 'g',  expected: { ok: false, reason: 'INVALID' } },
+  { input: '0kg',     unit: 'g',  expected: { ok: false, reason: 'INVALID' } },
+  { input: '-10kg',   unit: 'g',  expected: { ok: false, reason: 'INVALID' } },
+  { input: '10kg2',   unit: 'g',  expected: { ok: false, reason: 'INVALID' } },
+  { input: '5.5.5kg', unit: 'g',  expected: { ok: false, reason: 'INVALID' } },
+  { input: '10xyz',   unit: 'g',  expected: { ok: false, reason: 'INVALID' } },
+]
+
+for (const c of PKG_CASES) {
+  const result = parsePackagingQuantity(c.input, c.unit)
+  const okMatch =
+    result.ok === c.expected.ok &&
+    (result.ok && c.expected.ok
+      ? result.value === c.expected.value
+      : !result.ok && !c.expected.ok
+        ? result.reason === c.expected.reason
+        : false)
+  if (okMatch) {
+    pass++
+    const expr = c.expected.ok
+      ? String(c.expected.value)
+      : c.expected.reason
+    console.log(`  ✓  [PKG] ${JSON.stringify(c.input)} (${c.unit}) → ${expr}`)
+  } else {
+    fail++
+    const got = result.ok ? String(result.value) : result.reason
+    const want = c.expected.ok ? String(c.expected.value) : c.expected.reason
+    console.log(`  ✗  [PKG] ${JSON.stringify(c.input)} (${c.unit})`)
+    console.log(`        esperado ${want}, obteve ${got}`)
+    failures.push(`PKG ${c.input} (${c.unit})`)
   }
 }
 
