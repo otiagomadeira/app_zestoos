@@ -12,6 +12,7 @@
  */
 
 import { buildArticleDraft, getCountingModeOptions } from '../src/lib/articleDraft'
+import type { ConfidenceLevel } from '../src/lib/articleConfidence'
 
 type Family = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I'
 
@@ -274,16 +275,17 @@ const PROBES: Probe[] = [
 // ── Execução ─────────────────────────────────────────────────────────────────
 
 type Row = {
-  family:   Family
-  input:    string
-  name:     string
-  unit:     string
-  intent:   string
-  options:  string
-  category: string
-  hint:     string
-  flags:    string[]
-  note:     string
+  family:     Family
+  input:      string
+  name:       string
+  unit:       string
+  intent:     string
+  options:    string
+  category:   string
+  hint:       string
+  flags:      string[]
+  note:       string
+  confidence: ConfidenceLevel
 }
 
 const rows: Row[] = []
@@ -329,29 +331,31 @@ for (const probe of PROBES) {
       : (draft.detected_qty ? `qty ${draft.detected_qty}` : '')
 
     row = {
-      family:   probe.family,
-      input:    probe.input,
-      name:     draft.name || '(vazio)',
-      unit:     draft.unit,
-      intent:   intentDesc,
-      options:  optsDesc,
-      category: draft.category ?? '(none)',
+      family:     probe.family,
+      input:      probe.input,
+      name:       draft.name || '(vazio)',
+      unit:       draft.unit,
+      intent:     intentDesc,
+      options:    optsDesc,
+      category:   draft.category ?? '(none)',
       hint,
       flags,
-      note:     probe.note ?? '',
+      note:       probe.note ?? '',
+      confidence: draft.confidence,
     }
   } catch (err) {
     row = {
-      family:   probe.family,
-      input:    probe.input,
-      name:     '(CRASH)',
-      unit:     '',
-      intent:   '',
-      options:  '',
-      category: '',
-      hint:     '',
-      flags:    [`CRASH: ${(err as Error).message}`],
-      note:     probe.note ?? '',
+      family:     probe.family,
+      input:      probe.input,
+      name:       '(CRASH)',
+      unit:       '',
+      intent:     '',
+      options:    '',
+      category:   '',
+      hint:       '',
+      flags:      [`CRASH: ${(err as Error).message}`],
+      note:       probe.note ?? '',
+      confidence: 'low',
     }
   }
   rows.push(row)
@@ -385,5 +389,25 @@ console.log(`\n────── Resumo ──────`)
 console.log(`Total casos:       ${rows.length}`)
 console.log(`Casos com ⚠:       ${totalFlagged}`)
 console.log(`Casos limpos:      ${rows.length - totalFlagged}`)
+
+// ── Histograma de confiança + gate de calibração ───────────────────────────
+const confCounts: Record<ConfidenceLevel, number> = { high: 0, medium: 0, low: 0 }
+for (const r of rows) confCounts[r.confidence]++
+const total = rows.length || 1
+const pct   = (n: number) => ((n / total) * 100).toFixed(1)
+
+console.log(`\n────── Histograma de confiança ──────`)
+console.log(`high:   ${pct(confCounts.high)}%  (${confCounts.high}/${total})`)
+console.log(`medium: ${pct(confCounts.medium)}%  (${confCounts.medium}/${total})`)
+console.log(`low:    ${pct(confCounts.low)}%  (${confCounts.low}/${total})`)
+
+const highPct = (confCounts.high / total) * 100
+const lowPct  = (confCounts.low  / total) * 100
+const gateHigh = highPct >= 70
+const gateLow  = lowPct  <= 12
+const gatePass = gateHigh && gateLow
+console.log(`\nGate de calibração (battery): ${gatePass ? 'PASS' : 'FAIL'}`)
+console.log(`  high ≥ 70%:  ${gateHigh ? 'PASS' : 'FAIL'}  (${highPct.toFixed(1)}%)`)
+console.log(`  low  ≤ 12%:  ${gateLow  ? 'PASS' : 'FAIL'}  (${lowPct.toFixed(1)}%)`)
 
 process.exit(totalFlagged > 0 ? 0 : 0) // sempre 0 — exploratório, não regressão

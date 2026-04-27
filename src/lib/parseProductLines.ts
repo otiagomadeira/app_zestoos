@@ -1,6 +1,7 @@
 import { normalizeKey } from './ingredientDictionary'
 import { buildArticleDraft } from './articleDraft'
 import type { ArticleWarning } from './normalizeArticle'
+import type { ConfidenceLevel, ConfidenceReason } from './articleConfidence'
 
 export type ParsedLine = {
   id: string
@@ -19,7 +20,12 @@ export type ParsedLine = {
   categoryConfident: boolean
   warnings: ArticleWarning[]
   wasManuallyEdited: boolean // true quando utilizador alterou o nome no preview
-  confidence: 'ok' | 'partial'
+  /** Estado da linha: 'ok' (nome+unit prontos) | 'partial' (faltam dados). Mantém-se separado de `confidence`. */
+  lineState: 'ok' | 'partial'
+  /** Confiança operacional do parser. Drive do dot/contador no BulkImportPanel. */
+  confidence:        ConfidenceLevel
+  confidenceReasons: ConfidenceReason[]
+  needsReview:       boolean
   isDuplicate: boolean
   isDuplicateInBatch: boolean
   existingArticleId?: string
@@ -59,7 +65,7 @@ export function parseProductLines(
       : ''
     const qty = draft.detected_qty != null ? String(draft.detected_qty) : ''
 
-    const confidence: 'ok' | 'partial' =
+    const lineState: 'ok' | 'partial' =
       draft.name.length > 0 && draft.unit ? 'ok' : 'partial'
 
     results.push({
@@ -78,7 +84,10 @@ export function parseProductLines(
       categoryConfident:   draft.categoryConfident,
       warnings:            draft.warnings,
       wasManuallyEdited:   false,
-      confidence,
+      lineState,
+      confidence:          draft.confidence,
+      confidenceReasons:   draft.confidenceReasons,
+      needsReview:         draft.needsReview,
       isDuplicate:         existingId !== undefined,
       isDuplicateInBatch:  batchDupIdx !== undefined,
       existingArticleId:   existingId,

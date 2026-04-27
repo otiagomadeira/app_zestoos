@@ -10,6 +10,7 @@ import { suggestCategory } from '@/lib/categoryKeywords'
 import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
 import { useOrgAliases } from '@/hooks/useOrgAliases'
 import { getCountingMode, inferIntent } from '@/lib/articleDraft'
+import { CONFIDENCE_REASON_LABELS } from '@/lib/articleConfidence'
 
 // Re-deriva intent a partir da ParsedLine — evita propagar `intent` ao tipo
 // ParsedLine (single source of truth fica em articleDraft). Devolve null se
@@ -99,11 +100,21 @@ function LineRow({ line, onChange, onDelete, onApplySuggestion: _onApplySuggesti
   const isInvalid   = line.name.trim() === '' || line.unit.trim() === ''
   const unitMissing = line.unit.trim() === ''
   const cm          = pillCountingMode(line)
+  // R-CONFIDENCE: dot por linha. LOW = aviso visível (precisa revisão),
+  // MEDIUM = dot subtil (verificar mas não bloquear), HIGH = nada.
+  const showLow     = !isInvalid && line.confidence === 'low'
+  const showMedium  = !isInvalid && line.confidence === 'medium'
 
   return (
     <div style={{
       background:    isInvalid ? 'var(--error-surface)' : isResolved ? 'var(--success-surface-on-primary)' : 'var(--border-on-primary-soft)',
-      border:        `1px solid ${isInvalid ? 'var(--error-border)' : isResolved ? 'var(--success-border-on-primary)' : 'var(--border-on-primary-soft)'}`,
+      border:        `1px solid ${isInvalid
+        ? 'var(--error-border)'
+        : showLow
+          ? 'var(--warning)'
+          : isResolved
+            ? 'var(--success-border-on-primary)'
+            : 'var(--border-on-primary-soft)'}`,
       borderRadius:  8,
       padding:       '10px 12px',
       display:       'flex',
@@ -111,9 +122,51 @@ function LineRow({ line, onChange, onDelete, onApplySuggestion: _onApplySuggesti
       gap:           8,
     }}>
 
-      {/* Fila 1: Nome */}
+      {/* Confidence banner — só LOW. MEDIUM fica como dot ao lado do nome. */}
+      {showLow && (
+        <div style={{
+          display:      'flex',
+          alignItems:   'flex-start',
+          gap:          8,
+          fontSize:     11,
+          color:        'var(--text-on-primary)',
+          background:   'var(--error-surface)',
+          border:       `1px solid var(--warning)`,
+          borderRadius: 6,
+          padding:      '6px 8px',
+          lineHeight:   1.4,
+        }}>
+          <span style={{ color: 'var(--warning)', fontWeight: 700, fontSize: 13, lineHeight: 1 }}>!</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, marginBottom: 2 }}>A resolver</div>
+            <ul style={{ margin: 0, paddingLeft: 14, listStyle: 'disc' }}>
+              {line.confidenceReasons.map(r => (
+                <li key={r}>{CONFIDENCE_REASON_LABELS[r]}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {/* Fila 1: Nome (com dot de medium se aplicável) */}
       <div>
-        <label style={labelStyle}>NOME</label>
+        <label style={labelStyle}>
+          NOME
+          {showMedium && (
+            <span
+              title={line.confidenceReasons.map(r => CONFIDENCE_REASON_LABELS[r]).join(' · ')}
+              style={{
+                display:       'inline-block',
+                width:         8,
+                height:        8,
+                borderRadius:  '50%',
+                background:    'var(--text-on-primary-faint)',
+                marginLeft:    6,
+                verticalAlign: 'middle',
+              }}
+            />
+          )}
+        </label>
         <input
           value={line.name}
           onChange={e => onChange(line.id, 'name', e.target.value)}
@@ -436,6 +489,12 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
   const okLines = primaryLines.filter(l =>
     !isEffDup(l) && l.name.trim() !== '' && l.unit.trim() !== ''
   )
+  // R-CONFIDENCE: dentro de okLines, low fica no topo. Medium e high
+  // mantêm a ordem original (chef pode tê-la calibrado para revisão por
+  // contexto da fatura/lista). Sort total seria fricção.
+  const lowOkLines  = okLines.filter(l => l.confidence === 'low')
+  const restOkLines = okLines.filter(l => l.confidence !== 'low')
+  const orderedOkLines = [...lowOkLines, ...restOkLines]
   const ignoredCount = partialLines.length + dupLines.length
 
   const handleCreate = async () => {
@@ -538,6 +597,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
             ? 'Cola ou escreve uma lista — um produto por linha.'
             : [
                 `${okLines.length} pronto${okLines.length !== 1 ? 's' : ''}`,
+                lowOkLines.length > 0 ? `${lowOkLines.length} a confirmar` : null,
                 partialLines.length > 0 ? `${partialLines.length} a resolver` : null,
                 dupLines.length > 0 ? `${dupLines.length} duplicado${dupLines.length !== 1 ? 's' : ''}` : null,
               ].filter(Boolean).join(' · ')}
@@ -622,7 +682,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
                   PRONTOS ({okLines.length})
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {okLines.map(line => (
+                  {orderedOkLines.map(line => (
                     <OkCard
                       key={line.id}
                       line={line}

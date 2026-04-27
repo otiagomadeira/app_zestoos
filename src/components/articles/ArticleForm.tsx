@@ -16,6 +16,7 @@ import { ARTICLE_CATEGORIES } from '@/lib/categoryKeywords'
 import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
 import { normalizeArticleInput } from '@/lib/normalizeArticle'
 import { buildArticleDraft, formatDraftHint, getCountingModeOptions, inferIntent, type ArticleDraft, type ArticleIntent } from '@/lib/articleDraft'
+import { CONFIDENCE_REASON_LABELS } from '@/lib/articleConfidence'
 import { getSuggestedUnitWeight } from '@/lib/unitWeightSuggestions'
 import { useOrgAliases } from '@/hooks/useOrgAliases'
 
@@ -280,6 +281,10 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   // fornecedor mudava silenciosamente o número visual). Em criação fica []
   // até existir; após save, `createArticleSizeIfMissing` popula a tabela.
   const [articleSizes,       setArticleSizes]       = useState<ArticleSize[]>([])
+  // Camada de confiança: pill aparece se confidence !== 'high' E não dismissed.
+  // Reset a false sempre que o nome muda (recalcula); true quando o chef
+  // confirma explicitamente ou edita a categoria (sinaliza revisão).
+  const [confidenceDismissed, setConfidenceDismissed] = useState(false)
 
   const { aliases, learnAlias } = useOrgAliases()
   const rawNameRef              = useRef(existing?.name ?? '')
@@ -796,13 +801,20 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                   setCategory('')
                 }
               }
-              // Hint de parsing em tempo real + seed para auto-fill do fornecedor
+              // Hint de parsing em tempo real + seed para auto-fill do fornecedor.
+              // R-CONFIDENCE: sempre setar parsedHint quando há nome — a pill de
+              // confiança depende disto e nem todos os inputs com sinal de
+              // confiança têm packaging detectada (ex: "caixa pizza" sem qty).
+              // O paragrafo de hint formatado tem guard próprio (formatDraftHint
+              // retorna null se nada extraído).
               const hasExtracted =
                 draft.detected_qty != null ||
                 draft.detected_label != null ||
                 draft.supplierSeed != null
-              setParsedHint(hasExtracted ? draft : null)
+              setParsedHint(trimmed !== '' ? draft : null)
               parsedSeedRef.current = hasExtracted ? draft : null
+              // Reset dismiss em cada keystroke — chef ainda não viu este parse
+              setConfidenceDismissed(false)
               // Duplicate warning live: recompute em vez de só limpar.
               // Sem isto, a string desaparece em onChange e só volta no
               // blur — chef pode digitar duplicado por inteiro sem aviso.
@@ -831,7 +843,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
               {duplicateWarning}
             </p>
           )}
-          {parsedHint && !duplicateWarning && (
+          {parsedHint && !duplicateWarning && formatDraftHint(parsedHint) && (
             <p style={{
               fontSize:   11,
               color:      'var(--text-muted)',
@@ -841,6 +853,77 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             }}>
               {formatDraftHint(parsedHint)}
             </p>
+          )}
+          {/* Pill de confiança — aparece em criação quando o parser tem dúvidas.
+              HIGH não mostra (sem ruído). MEDIUM mostra micro-aviso discreto.
+              LOW pede confirmação explícita inline com botão "Está bem". Em
+              edição (artigo já guardado) escondemos sempre. */}
+          {!isEdit && parsedHint && !duplicateWarning && !confidenceDismissed
+            && parsedHint.confidence !== 'high'
+            && parsedHint.confidenceReasons.length > 0 && (
+            <div
+              role="status"
+              style={{
+                marginTop:    8,
+                padding:      parsedHint.confidence === 'low' ? '8px 12px' : '6px 10px',
+                borderRadius: 8,
+                background:   parsedHint.confidence === 'low' ? 'var(--surface-2)' : 'transparent',
+                border:       parsedHint.confidence === 'low'
+                              ? '1px solid var(--warning)'
+                              : '1px dashed var(--border)',
+                display:      'flex',
+                alignItems:   'flex-start',
+                gap:          10,
+                fontSize:     12,
+                color:        parsedHint.confidence === 'low' ? 'var(--text)' : 'var(--text-muted)',
+                lineHeight:   1.4,
+              }}
+            >
+              <span aria-hidden style={{
+                color:      parsedHint.confidence === 'low' ? 'var(--warning)' : 'var(--text-muted)',
+                fontWeight: 700,
+                marginTop:  1,
+                fontSize:   parsedHint.confidence === 'low' ? 14 : 12,
+              }}>
+                {parsedHint.confidence === 'low' ? '!' : '·'}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: parsedHint.confidence === 'low' ? 700 : 500 }}>
+                  {parsedHint.confidence === 'low'
+                    ? 'Confirma antes de guardar'
+                    : 'Verifica se está bem'}
+                </div>
+                <ul style={{ margin: '4px 0 0', paddingLeft: 16, listStyle: 'disc' }}>
+                  {parsedHint.confidenceReasons.map(r => (
+                    <li key={r} style={{ marginBottom: 1 }}>
+                      {CONFIDENCE_REASON_LABELS[r]}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              {parsedHint.confidence === 'low' && (
+                <button
+                  type="button"
+                  onClick={() => setConfidenceDismissed(true)}
+                  style={{
+                    height:       32,
+                    minWidth:     'var(--touch-min)',
+                    borderRadius: 6,
+                    border:       '1px solid var(--border)',
+                    background:   'var(--surface)',
+                    color:        'var(--text)',
+                    fontSize:     11,
+                    fontWeight:   600,
+                    cursor:       'pointer',
+                    padding:      '0 10px',
+                    flexShrink:   0,
+                    fontFamily:   'inherit',
+                  }}
+                >
+                  Está bem
+                </button>
+              )}
+            </div>
           )}
         </div>
 
@@ -857,6 +940,9 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             // Chef tocou: deixa de ser "auto" — futuras alterações de nome
             // não podem sobrescrever esta escolha.
             categoryAutoFilledRef.current = false
+            // R-CONFIDENCE: edição manual da categoria sinaliza revisão
+            // (chef leu o que estava e mudou); pill de confiança desaparece.
+            setConfidenceDismissed(true)
           }}
         />
 

@@ -15,8 +15,14 @@ import {
   toTitleCase,
   cleanName,
   extractName,
+  derivePackagingTrace,
   type ArticleWarning,
 } from './normalizeArticle'
+import {
+  assessConfidence,
+  type ConfidenceLevel,
+  type ConfidenceReason,
+} from './articleConfidence'
 
 // ── Tipos públicos ────────────────────────────────────────────────────────────
 
@@ -77,6 +83,11 @@ export type ArticleDraft = {
   detected_multipack?: { count: number; perPack: number }
   /** Intenção derivada (puro). Driver de UX para escolher a unidade do par_level. */
   intent: ArticleIntent
+  /** Camada de confiança operacional. UI consome para decidir se mostrar pill / dot / contador. */
+  confidence:        ConfidenceLevel
+  confidenceReasons: ConfidenceReason[]
+  /** Conveniência: confidence === 'low'. Mantido como campo para o consumidor não duplicar lógica. */
+  needsReview:       boolean
 }
 
 // ── Inferência de intenção ────────────────────────────────────────────────────
@@ -315,6 +326,19 @@ export function buildArticleDraft(
 
   const intent = inferIntent({ unit: normalized.unit, supplierSeed, multipack: detectedMultipack })
 
+  // ── Camada de confiança ────────────────────────────────────────────────────
+  const trace   = derivePackagingTrace(trimmed, cl)
+  const verdict = assessConfidence({
+    rawInput:          trimmed,
+    finalName:         normalized.name,
+    category:          normalized.category,
+    categoryConfident: normalized.categoryConfident,
+    intent,
+    trace,
+    detectedLabel,
+    detectedQty,
+  })
+
   return {
     rawInput:           raw,
     name:               normalized.name,
@@ -330,6 +354,9 @@ export function buildArticleDraft(
     detected_label:     detectedLabel,
     detected_multipack: detectedMultipack,
     intent,
+    confidence:         verdict.confidence,
+    confidenceReasons:  verdict.reasons,
+    needsReview:        verdict.needsReview,
   }
 }
 

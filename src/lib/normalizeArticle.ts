@@ -115,6 +115,53 @@ function stripLabelAndConnectors(words: string[], idx: number): string[] {
   return out
 }
 
+/**
+ * Trace mínimo da extração de nome — alimenta a camada de confiança
+ * (`articleConfidence.ts`). Single flag: `strippedPackagingNoQty` indica
+ * que o branch type='unit' encontrou uma container word E não havia
+ * número adjacente — sinal fraco que pode ter perdido o produto
+ * (ex: "caixa pizza" → "Pizza").
+ *
+ * Branches type='weight'/'volume'/'packaging' nunca disparam — esses
+ * têm qty explícita ou label canónico que o parser tratou com confiança.
+ */
+export type ExtractNameTrace = {
+  strippedPackagingNoQty: boolean
+}
+
+/**
+ * Análise paralela ao branch type='unit' de `extractName`. Replica APENAS
+ * a deteção de "há container word sem número adjacente?" — não reproduz
+ * cleanup nem strip. Pure, side-effect-free.
+ */
+export function derivePackagingTrace(line: string, cl: ClassifiedLine): ExtractNameTrace {
+  if (cl.type !== 'unit') return { strippedPackagingNoQty: false }
+
+  const words        = line.split(/\s+/).filter(Boolean)
+  const isBareNumber = (w: string) => /^\d+[.,]?\d*$/.test(w)
+  const isContainer  = (w: string, idx: number, len: number) => {
+    const lower = w.toLowerCase()
+    if (!CONTAINER_CONTEXT_WORDS.includes(lower)) return false
+    // Mesma excepção R-PATCH 2 que stripContainersAndBareNumbersList:
+    // "molho" idx 0 com palavras a seguir é prefixo de nome.
+    if ((lower === 'molho' || lower === 'molhos') && idx === 0 && len > 1) return false
+    return true
+  }
+
+  let hasContainer = false
+  for (let i = 0; i < words.length; i++) {
+    if (!isContainer(words[i], i, words.length)) continue
+    hasContainer = true
+    let j = i + 1
+    while (j < words.length && NAME_CONNECTORS.has(words[j].toLowerCase())) j++
+    if (j < words.length && isBareNumber(words[j])) {
+      // container + número adjacente: parser tem qty. Não é sinal fraco.
+      return { strippedPackagingNoQty: false }
+    }
+  }
+  return { strippedPackagingNoQty: hasContainer }
+}
+
 export function extractName(line: string, cl: ClassifiedLine): string {
   if (cl.type === 'weight' || cl.type === 'volume') {
     // Tentar multipack ("6x1L") primeiro; senão weight/volume normal.
