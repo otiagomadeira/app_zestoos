@@ -159,6 +159,10 @@ export function parsePackagingQuantity(
 
   const suffix = m[2]
   const rules  = SUFFIX_RULES[articleUnit]
+  // Defensivo: artigo legacy pode ter unit='kg'/'L' (não-canónico). Sem isto,
+  // `rules.wrong` rebenta o form na primeira render. Tratar como INVALID
+  // até alguém saneie o registo no DB.
+  if (!rules) return { ok: false, reason: 'INVALID' }
 
   if (rules.wrong.has(suffix)) return { ok: false, reason: 'INCOMPATIBLE_UNIT' }
   const multiplier = rules.ok[suffix]

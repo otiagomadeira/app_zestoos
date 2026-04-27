@@ -38,8 +38,12 @@ export type ClassifiedLine = {
   /**
    * Preserva count × perPack (em base_unit) quando o input é multipack ("6x1L").
    * Existe para UX (hint reconhecível pelo chef); qty já contém o total.
+   *
+   * `innerLabel` aparece quando há packaging aninhado: "pacote 1L caixa 6L"
+   * → label='caixa' (outer, é o que o chef encomenda), innerLabel='pacote'
+   * (alternativa que substitui o "unidade" genérico nas pills).
    */
-  multipack?: { count: number; perPack: number }
+  multipack?: { count: number; perPack: number; innerLabel?: string }
 }
 
 export type MissingField = 'base_per_order_unit' | 'order_unit' | 'base_unit_confirmation'
@@ -159,17 +163,55 @@ function findAdjacentPackagingLabelAfter(line: string, matchEnd: number): string
 }
 
 /**
- * Detecta padrão `<N> uni|unidade(s)?` no resto da linha, após o label.
- * Usado para reconhecer multipack-equivalente "1lt caixa 6 uni leite ..."
- * — equivalente semântico a "6x1L caixa".
+ * Detecta o "count" de um multipack-equivalente quando peso/volume vem antes
+ * de um label de embalagem. Aplica-se no INÍCIO do `afterLabel` (já limpo
+ * de connectors e do próprio label), o que ancora a contagem ao sítio certo
+ * — evitar match em números soltos no resto da linha.
+ *
+ * Aceita formas que o chef escreve naturalmente:
+ *   "6 uni"  → 6
+ *   "6uni"   → 6     (sem espaço — bug histórico que causava perda do count)
+ *   "6 unid" → 6
+ *   "6un"    → 6
+ *   "4"      → 4     (sem suffix — "pack 4" é multipack de 4 packs)
+ *
+ * Casos cobertos pelos testes do parser ("leite 1L pack 6uni",
+ * "manteiga 200g pack 4", "1lt caixa 6 uni leite m.g.").
  */
-const ALT_MULTIPACK_COUNT_RE = /(\d+)\s+(?:uni|unis|unid|unids|unidades?)\b/i
+const ALT_MULTIPACK_COUNT_RE = /^(\d+)\s*(?:uni|unis|unid|unids|unidades?|un)?\b/i
 
 /**
  * Constrói a ClassifiedLine para weight/volume, escolhendo label adjacente
  * antes ou depois e detectando multipack-equivalente quando há os 3 sinais
  * (qty+unit, label-after, "<N> uni" no resto).
  */
+// Regex factory: total na mesma família do match. Reutilizado para detectar
+// "X kg/L/g/mL" depois de um label-after (multipack-equivalent ou outer
+// packaging em nested).
+function sameFamilyTotalRe(type: 'weight' | 'volume'): RegExp {
+  return type === 'weight'
+    ? /^(\d+[.,]?\d*)\s*(kg|g|mg|gr|grs|gramas?)\b/i
+    : /^(\d+[.,]?\d*)\s*(litros?|mililitros?|lt[s]?|cl|dl|ml|l)\b/i
+}
+
+function parseSameFamilyTotal(
+  text: string,
+  type: 'weight' | 'volume',
+): number | null {
+  const m = text.match(sameFamilyTotalRe(type))
+  if (!m) return null
+  const raw  = parseQty(m[1])
+  const unit = m[2].toLowerCase()
+  if (type === 'weight') {
+    if (unit === 'kg') return raw * 1000
+    return raw
+  }
+  if (['l', 'lt', 'lts', 'litro', 'litros'].includes(unit)) return raw * 1000
+  if (unit === 'cl') return raw * 10
+  if (unit === 'dl') return raw * 100
+  return raw
+}
+
 function resolveQtyMatch(
   line:        string,
   matchIndex:  number,
@@ -180,23 +222,66 @@ function resolveQtyMatch(
 ): ClassifiedLine {
   let label    = findAdjacentPackagingLabel(line, matchIndex)
   let total    = qty
-  let multipack: { count: number; perPack: number } | undefined
+  let multipack: { count: number; perPack: number; innerLabel?: string } | undefined
 
   if (!label) {
     const labelAfter = findAdjacentPackagingLabelAfter(line, matchIndex + matchLength)
     if (labelAfter) {
       label = labelAfter
-      // Procurar "<N> uni" no resto da linha (depois do label) — multipack-equivalente.
-      // Ex.: "1lt caixa 6 uni leite m.g." → caixa de 6 × 1 L.
+      // Construir o resto da linha começando imediatamente depois do label,
+      // sem espaços/connectors residuais. O trim inicial é essencial: sem ele,
+      // o `replace(^${labelAfter})` falhava porque a string começava com " "
+      // — causa raiz histórica do "6uni" colado nunca contar como multipack.
       const afterLabel = line
         .slice(matchIndex + matchLength)
-        .replace(/^\s*(?:de|da|do|dos|das)\s+/i, '')   // skip connector
+        .replace(/^\s+/, '')
+        .replace(/^(?:de|da|do|dos|das)\s+/i, '')
         .replace(new RegExp(`^${labelAfter}\\b`, 'i'), '')
+        .replace(/^\s+/, '')
       const altMatch = afterLabel.match(ALT_MULTIPACK_COUNT_RE)
       if (altMatch) {
         const count = parseFloat(altMatch[1])
-        multipack = { count, perPack: qty }
-        total     = count * qty
+        if (count > 0) {
+          multipack = { count, perPack: qty }
+          total     = count * qty
+        }
+      } else {
+        // Sem count "uni" no afterLabel — tentar interpretar como TOTAL na
+        // mesma família (peso ou volume). Caso típico: "leite 1L pack 6L"
+        // → "6L" é o total do pack. Calcula count = total/per-unit; se
+        // inteiro > 1, regista multipack. Senão, mantém só o total
+        // (conversion_factor passa a ser o total, não a per-unit).
+        const totalBase = parseSameFamilyTotal(afterLabel, type)
+        if (totalBase != null && totalBase > qty && qty > 0) {
+          total = totalBase
+          const ratio = totalBase / qty
+          if (Number.isInteger(ratio) && ratio > 1) {
+            multipack = { count: ratio, perPack: qty }
+          }
+        }
+      }
+    }
+  } else {
+    // Label foi capturado ANTES do qty (ex: "pacote 1l"). Tentar agora detectar
+    // packaging exterior aninhado: "pacote 1l caixa 6l" → outer='caixa',
+    // inner='pacote', total=6L, multipack={6, 1000, innerLabel:'pacote'}.
+    // O label final passa a ser o outer (é o que o chef encomenda).
+    const outerLabel = findAdjacentPackagingLabelAfter(line, matchIndex + matchLength)
+    if (outerLabel && outerLabel !== label) {
+      const afterOuter = line
+        .slice(matchIndex + matchLength)
+        .replace(/^\s+/, '')
+        .replace(/^(?:de|da|do|dos|das)\s+/i, '')
+        .replace(new RegExp(`^${outerLabel}\\b`, 'i'), '')
+        .replace(/^\s+/, '')
+      const totalBase = parseSameFamilyTotal(afterOuter, type)
+      if (totalBase != null && totalBase > qty && qty > 0) {
+        const ratio = totalBase / qty
+        if (Number.isInteger(ratio) && ratio > 1) {
+          multipack = { count: ratio, perPack: qty, innerLabel: label }
+          label     = outerLabel
+          total     = totalBase
+        }
       }
     }
   }

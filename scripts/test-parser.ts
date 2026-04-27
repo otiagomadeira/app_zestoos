@@ -12,7 +12,7 @@
  * Sai com código 1 se algum caso falhar.
  */
 
-import { buildArticleDraft, formatDraftHint } from '../src/lib/articleDraft'
+import { buildArticleDraft, formatDraftHint, getCountingMode, getCountingModeOptions, inferIntent, type ArticleIntent, type CountingMode } from '../src/lib/articleDraft'
 import { parseProductLines } from '../src/lib/parseProductLines'
 import { parsePackagingQuantity, type ArticleBaseUnit } from '../src/lib/units'
 import { getSuggestedUnitWeight } from '../src/lib/unitWeightSuggestions'
@@ -27,6 +27,9 @@ type Expect = {
   multipackCount?:   number | null
   multipackPerPack?: number | null
   hint?:             string | null
+  intent?:           ArticleIntent['kind']
+  intentOrderUnit?:  string
+  intentFactor?:     number
 }
 
 type Case = {
@@ -89,6 +92,58 @@ const CASES: Case[] = [
     expect: { name: 'Atum Enlatado', unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 1000 } },
   { tag: 'CRITICAL', input: 'Pimentos em conserva frasco 1kg',
     expect: { name: 'Pimentos em Conserva', unit: 'g', category: 'Mercearia', orderUnit: 'frasco', conversionFactor: 1000 } },
+
+  // ── Multipack-equivalente: peso/volume + label + count solto ──────
+  // Bug histórico: "6uni" colado e "pack 4" sem suffix ficavam fora do
+  // ALT_MULTIPACK_COUNT_RE; multipack era ignorado e conversion_factor
+  // ficava em qty (1L em vez de 6L). Casos abaixo cobrem o fix.
+  { tag: 'CRITICAL', input: 'leite 1L pack 6uni',
+    expect: { name: 'Leite', unit: 'mL', orderUnit: 'pack', conversionFactor: 6000,
+              multipackCount: 6, multipackPerPack: 1000 } },
+  { tag: 'CRITICAL', input: 'leite pack 6x1L',
+    expect: { name: 'Leite', unit: 'mL', orderUnit: 'pack', conversionFactor: 6000,
+              multipackCount: 6, multipackPerPack: 1000 } },
+  { tag: 'CRITICAL', input: 'manteiga 200g pack 4',
+    expect: { name: 'Manteiga', unit: 'g', orderUnit: 'pack', conversionFactor: 800,
+              multipackCount: 4, multipackPerPack: 200 } },
+  // Total na mesma família depois do label ("pack 6L" = total no pack)
+  { tag: 'CRITICAL', input: 'leite 1L pack 6L',
+    expect: { name: 'Leite', unit: 'mL', orderUnit: 'pack', conversionFactor: 6000,
+              multipackCount: 6, multipackPerPack: 1000 } },
+  { tag: 'CRITICAL', input: 'manteiga 200g pack 800g',
+    expect: { name: 'Manteiga', unit: 'g', orderUnit: 'pack', conversionFactor: 800,
+              multipackCount: 4, multipackPerPack: 200 } },
+  { tag: 'CRITICAL', input: 'leite 250ml pack 1L',
+    expect: { name: 'Leite', unit: 'mL', orderUnit: 'pack', conversionFactor: 1000,
+              multipackCount: 4, multipackPerPack: 250 } },
+  // Ratio não-inteiro: total preservado, multipack undefined
+  { tag: 'CRITICAL', input: 'azeite 750ml garrafa 5L',
+    expect: { unit: 'mL', orderUnit: 'garrafa', conversionFactor: 5000,
+              multipackCount: null, multipackPerPack: null } },
+  // Nested packaging: inner label antes + outer label depois ("pacote 1l caixa 6l")
+  // → outer="caixa" (encomenda), inner="pacote" (label da alternativa).
+  { tag: 'CRITICAL', input: 'Nata 20% pacote 1l caixa 6l',
+    expect: { name: 'Nata 20%', unit: 'mL', category: 'Lacticínios e Ovos',
+              orderUnit: 'caixa', conversionFactor: 6000,
+              multipackCount: 6, multipackPerPack: 1000 } },
+  // Nata singular (sem "s") devia também cair em Lacticínios e Ovos
+  { tag: 'CRITICAL', input: 'Nata 35%',
+    expect: { name: 'Nata 35%', unit: 'mL', category: 'Lacticínios e Ovos' } },
+  // "Creme culinário" caía em Bebidas via unit-fallback (mL sem keyword) —
+  // categoria explícita em Lacticínios resolve.
+  { tag: 'CRITICAL', input: 'creme culinário pacote 1l caixa 6l',
+    expect: { name: 'Creme Culinário', unit: 'mL', category: 'Lacticínios e Ovos',
+              orderUnit: 'caixa', conversionFactor: 6000,
+              multipackCount: 6, multipackPerPack: 1000 } },
+  { tag: 'CRITICAL', input: 'leite meio gordo pacote 1l caixa 6l',
+    expect: { name: 'Leite Meio Gordo', unit: 'mL', orderUnit: 'caixa', conversionFactor: 6000,
+              multipackCount: 6, multipackPerPack: 1000 } },
+  { tag: 'CRITICAL', input: 'manteiga pacote 200g caixa 800g',
+    expect: { name: 'Manteiga', unit: 'g', orderUnit: 'caixa', conversionFactor: 800,
+              multipackCount: 4, multipackPerPack: 200 } },
+  { tag: 'CRITICAL', input: 'Ovos caixa 180 uni',
+    expect: { name: 'Ovos', unit: 'un', orderUnit: 'caixa', conversionFactor: 180,
+              multipackCount: null, multipackPerPack: null } },
 
   // ── Defensivas (não-regressão de cobertura existente) ──────────────
   { tag: 'REGRESSION', input: 'Mel frasco 1kg',
@@ -155,6 +210,37 @@ const CASES: Case[] = [
     expect: { name: 'Leite Sem Lactose', unit: 'mL', category: 'Lacticínios e Ovos',
               orderUnit: 'caixa', conversionFactor: 6000,
               multipackCount: 6, multipackPerPack: 1000, hint: '6 x 1 L · caixa' } },
+
+  // ── Intent (Iteração 1: dispatch de UX para par_level visual) ────────
+  // Driver: design doc 2026-04-27-article-intent-design.md.
+  // Cobertura por caso obrigatório do produto. COUNTABLE_UNIT puro tem
+  // cobertura directa em INTENT_DIRECT_CASES abaixo (não depende do parser
+  // de nome — a inferência de "frango inteiro" → un exigiria expandir
+  // suggestUnit, fora de scope na Iteração 1).
+  { tag: 'CRITICAL', input: 'frango 10kg',
+    expect: { name: 'Frango', unit: 'g', intent: 'WEIGHT_LOOSE',
+              orderUnit: null, conversionFactor: null } },
+  { tag: 'CRITICAL', input: 'frango caixa 10kg',
+    expect: { name: 'Frango', unit: 'g', intent: 'PACKAGED_WEIGHT',
+              orderUnit: 'caixa', conversionFactor: 10000,
+              intentOrderUnit: 'caixa', intentFactor: 10000 } },
+  { tag: 'CRITICAL', input: 'leite 1L',
+    expect: { name: 'Leite', unit: 'mL', intent: 'VOLUME',
+              orderUnit: null, conversionFactor: null } },
+  { tag: 'CRITICAL', input: 'ovos caixa 180 uni',
+    expect: { name: 'Ovos', unit: 'un', intent: 'COUNTABLE_PACKAGED',
+              orderUnit: 'caixa', conversionFactor: 180,
+              intentOrderUnit: 'caixa', intentFactor: 180 } },
+  { tag: 'CRITICAL', input: 'rúcula saco 200g',
+    expect: { name: 'Rúcula', unit: 'g', intent: 'PACKAGED_WEIGHT',
+              orderUnit: 'saco', conversionFactor: 200,
+              intentOrderUnit: 'saco', intentFactor: 200 } },
+  // Volume com packaging — variante não pedida no spec mas cobre PACKAGED_VOLUME.
+  // "Leite caixa 1L" → caixa de 1L → PACKAGED_VOLUME.
+  { tag: 'CRITICAL', input: 'leite caixa 1L',
+    expect: { name: 'Leite', unit: 'mL', intent: 'PACKAGED_VOLUME',
+              orderUnit: 'caixa', conversionFactor: 1000,
+              intentOrderUnit: 'caixa', intentFactor: 1000 } },
 ]
 
 let pass = 0
@@ -198,6 +284,24 @@ for (const c of CASES) {
     const got = formatDraftHint(d)
     if (got !== c.expect.hint) errs.push(`hint: esperado "${c.expect.hint}" obteve "${got}"`)
   }
+  if (c.expect.intent !== undefined && d.intent.kind !== c.expect.intent) {
+    errs.push(`intent.kind: esperado "${c.expect.intent}" obteve "${d.intent.kind}"`)
+  }
+  if (c.expect.intentOrderUnit !== undefined) {
+    const got = 'orderUnit' in d.intent ? d.intent.orderUnit : null
+    if (got !== c.expect.intentOrderUnit) {
+      errs.push(`intent.orderUnit: esperado "${c.expect.intentOrderUnit}" obteve "${got}"`)
+    }
+  }
+  if (c.expect.intentFactor !== undefined) {
+    const got = d.intent.kind === 'PACKAGED_WEIGHT'   ? d.intent.basePerOrder
+              : d.intent.kind === 'PACKAGED_VOLUME'   ? d.intent.basePerOrder
+              : d.intent.kind === 'COUNTABLE_PACKAGED'? d.intent.perPack
+              : null
+    if (got !== c.expect.intentFactor) {
+      errs.push(`intent.factor: esperado ${c.expect.intentFactor} obteve ${got}`)
+    }
+  }
 
   if (errs.length === 0) {
     pass++
@@ -207,6 +311,229 @@ for (const c of CASES) {
     console.log(`  ✗  [${c.tag}] ${c.input}`)
     for (const e of errs) console.log(`        ${e}`)
     failures.push(c.input)
+  }
+}
+
+// ── inferIntent: cobertura directa das 6 ramificações ───────────────────────
+//
+// Independente do parser de nome — testa a função pura. Cobre o que o
+// dispatch do ArticleForm precisa de saber para escolher a unidade visual
+// do par_level. Casos do parser acima cobrem o feliz caminho integrado;
+// estes asseguram que cada ramo do switch é alcançável.
+
+console.log('\n── inferIntent (puro) ──')
+const INTENT_DIRECT_CASES: Array<{
+  label:    string
+  args:     Parameters<typeof inferIntent>[0]
+  expected: ArticleIntent
+}> = [
+  { label: 'g sem seed', args: { unit: 'g' },
+    expected: { kind: 'WEIGHT_LOOSE' } },
+  { label: 'mL sem seed', args: { unit: 'mL' },
+    expected: { kind: 'VOLUME' } },
+  { label: 'un sem seed', args: { unit: 'un' },
+    expected: { kind: 'COUNTABLE_UNIT' } },
+  { label: 'g + caixa 10000', args: { unit: 'g', supplierSeed: { order_unit: 'caixa', conversion_factor: 10000, source: 'detected' } },
+    expected: { kind: 'PACKAGED_WEIGHT', orderUnit: 'caixa', basePerOrder: 10000 } },
+  { label: 'mL + caixa 1000', args: { unit: 'mL', supplierSeed: { order_unit: 'caixa', conversion_factor: 1000, source: 'detected' } },
+    expected: { kind: 'PACKAGED_VOLUME', orderUnit: 'caixa', basePerOrder: 1000 } },
+  { label: 'un + caixa 180', args: { unit: 'un', supplierSeed: { order_unit: 'caixa', conversion_factor: 180, source: 'detected' } },
+    expected: { kind: 'COUNTABLE_PACKAGED', orderUnit: 'caixa', perPack: 180 } },
+  // Edge cases: seed sem factor (R1 do design doc) → cair para *_LOOSE
+  { label: 'g + order_unit sem factor → WEIGHT_LOOSE',
+    args: { unit: 'g', supplierSeed: { order_unit: 'caixa', source: 'detected' } },
+    expected: { kind: 'WEIGHT_LOOSE' } },
+  { label: 'un + order_unit sem factor → COUNTABLE_UNIT',
+    args: { unit: 'un', supplierSeed: { order_unit: 'caixa', source: 'detected' } },
+    expected: { kind: 'COUNTABLE_UNIT' } },
+  { label: 'g + factor=0 → WEIGHT_LOOSE (defensivo)',
+    args: { unit: 'g', supplierSeed: { order_unit: 'caixa', conversion_factor: 0, source: 'detected' } },
+    expected: { kind: 'WEIGHT_LOOSE' } },
+]
+
+for (const c of INTENT_DIRECT_CASES) {
+  const got = inferIntent(c.args)
+  const ok  = JSON.stringify(got) === JSON.stringify(c.expected)
+  if (ok) {
+    pass++
+    console.log(`  ✓  [INTENT] ${c.label}`)
+  } else {
+    fail++
+    console.log(`  ✗  [INTENT] ${c.label}`)
+    console.log(`        esperado ${JSON.stringify(c.expected)}`)
+    console.log(`        obteve   ${JSON.stringify(got)}`)
+    failures.push(c.label)
+  }
+}
+
+// ── getCountingMode: cobertura directa ────────────────────────────────────────
+//
+// Helper consumido pela "Conta em: X" pill no ArticleForm/BulkImportPanel.
+// Testa cada ramo do switch + precedência de article_sizes sobre intent.
+
+console.log('\n── getCountingMode (puro) ──')
+const COUNTING_MODE_DIRECT_CASES: Array<{
+  label:    string
+  args:     Parameters<typeof getCountingMode>[0]
+  expected: CountingMode
+}> = [
+  { label: 'WEIGHT_LOOSE → kg/1000/needs',
+    args: { intent: { kind: 'WEIGHT_LOOSE' } },
+    expected: { count_unit: 'kg', base_per_unit: 1000, needs_supplier: true } },
+  { label: 'VOLUME → L/1000/needs',
+    args: { intent: { kind: 'VOLUME' } },
+    expected: { count_unit: 'L', base_per_unit: 1000, needs_supplier: true } },
+  { label: 'COUNTABLE_UNIT → un/1/needs',
+    args: { intent: { kind: 'COUNTABLE_UNIT' } },
+    expected: { count_unit: 'un', base_per_unit: 1, needs_supplier: true } },
+  { label: 'PACKAGED_WEIGHT caixa 10kg',
+    args: { intent: { kind: 'PACKAGED_WEIGHT', orderUnit: 'caixa', basePerOrder: 10000 } },
+    expected: { count_unit: 'caixa', base_per_unit: 10000, needs_supplier: false } },
+  { label: 'PACKAGED_VOLUME caixa 1L',
+    args: { intent: { kind: 'PACKAGED_VOLUME', orderUnit: 'caixa', basePerOrder: 1000 } },
+    expected: { count_unit: 'caixa', base_per_unit: 1000, needs_supplier: false } },
+  { label: 'COUNTABLE_PACKAGED caixa 180un',
+    args: { intent: { kind: 'COUNTABLE_PACKAGED', orderUnit: 'caixa', perPack: 180 } },
+    expected: { count_unit: 'caixa', base_per_unit: 180, needs_supplier: false } },
+  { label: 'article_sizes ganha sobre WEIGHT_LOOSE',
+    args: { intent: { kind: 'WEIGHT_LOOSE' }, articleSizes: [{ label: 'saco', base_per_unit: 5000 }] },
+    expected: { count_unit: 'saco', base_per_unit: 5000, needs_supplier: false } },
+  { label: 'article_sizes vazio cai para intent',
+    args: { intent: { kind: 'COUNTABLE_UNIT' }, articleSizes: [] },
+    expected: { count_unit: 'un', base_per_unit: 1, needs_supplier: true } },
+]
+
+for (const c of COUNTING_MODE_DIRECT_CASES) {
+  const got = getCountingMode(c.args)
+  const ok  = JSON.stringify(got) === JSON.stringify(c.expected)
+  if (ok) {
+    pass++
+    console.log(`  ✓  [COUNT] ${c.label}`)
+  } else {
+    fail++
+    console.log(`  ✗  [COUNT] ${c.label}`)
+    console.log(`        esperado ${JSON.stringify(c.expected)}`)
+    console.log(`        obteve   ${JSON.stringify(got)}`)
+    failures.push(c.label)
+  }
+}
+
+// ── getCountingModeOptions: alternativas multipack ────────────────────────────
+//
+// Quando o input descreve um multipack PACKAGED_*, o helper deve devolver
+// 2 opções (pack default, unidade individual). Casos sem multipack ou
+// COUNTABLE_PACKAGED ficam com 1 só opção.
+
+console.log('\n── getCountingModeOptions (puro) ──')
+const COUNTING_OPTIONS_DIRECT_CASES: Array<{
+  label:    string
+  args:     Parameters<typeof getCountingModeOptions>[0]
+  expected: CountingMode[]
+}> = [
+  { label: 'PACKAGED_VOLUME multipack 6×1L → 2 opções',
+    args: { intent: { kind: 'PACKAGED_VOLUME', orderUnit: 'pack', basePerOrder: 6000,
+                       multipack: { count: 6, perPack: 1000 } } },
+    expected: [
+      { count_unit: 'pack',    base_per_unit: 6000, needs_supplier: false },
+      { count_unit: 'unidade', base_per_unit: 1000, needs_supplier: false },
+    ] },
+  { label: 'PACKAGED_WEIGHT multipack 4×200g → 2 opções',
+    args: { intent: { kind: 'PACKAGED_WEIGHT', orderUnit: 'pack', basePerOrder: 800,
+                       multipack: { count: 4, perPack: 200 } } },
+    expected: [
+      { count_unit: 'pack',    base_per_unit: 800, needs_supplier: false },
+      { count_unit: 'unidade', base_per_unit: 200, needs_supplier: false },
+    ] },
+  { label: 'PACKAGED_VOLUME nested → innerLabel substitui "unidade"',
+    args: { intent: { kind: 'PACKAGED_VOLUME', orderUnit: 'caixa', basePerOrder: 6000,
+                       multipack: { count: 6, perPack: 1000, innerLabel: 'pacote' } } },
+    expected: [
+      { count_unit: 'caixa',  base_per_unit: 6000, needs_supplier: false },
+      { count_unit: 'pacote', base_per_unit: 1000, needs_supplier: false },
+    ] },
+  { label: 'PACKAGED_VOLUME sem multipack → 1 opção',
+    args: { intent: { kind: 'PACKAGED_VOLUME', orderUnit: 'caixa', basePerOrder: 10000 } },
+    expected: [{ count_unit: 'caixa', base_per_unit: 10000, needs_supplier: false }] },
+  { label: 'PACKAGED_WEIGHT sem multipack → 1 opção',
+    args: { intent: { kind: 'PACKAGED_WEIGHT', orderUnit: 'caixa', basePerOrder: 10000 } },
+    expected: [{ count_unit: 'caixa', base_per_unit: 10000, needs_supplier: false }] },
+  { label: 'COUNTABLE_PACKAGED nunca tem alternativa (regra "ovos caixa 180")',
+    args: { intent: { kind: 'COUNTABLE_PACKAGED', orderUnit: 'caixa', perPack: 180 } },
+    expected: [{ count_unit: 'caixa', base_per_unit: 180, needs_supplier: false }] },
+  { label: 'WEIGHT_LOOSE → 1 opção',
+    args: { intent: { kind: 'WEIGHT_LOOSE' } },
+    expected: [{ count_unit: 'kg', base_per_unit: 1000, needs_supplier: true }] },
+  { label: 'article_sizes vence sobre multipack',
+    args: {
+      intent: { kind: 'PACKAGED_VOLUME', orderUnit: 'pack', basePerOrder: 6000,
+                 multipack: { count: 6, perPack: 1000 } },
+      articleSizes: [{ label: 'saco', base_per_unit: 5000 }],
+    },
+    expected: [{ count_unit: 'saco', base_per_unit: 5000, needs_supplier: false }] },
+]
+
+for (const c of COUNTING_OPTIONS_DIRECT_CASES) {
+  const got = getCountingModeOptions(c.args)
+  const ok  = JSON.stringify(got) === JSON.stringify(c.expected)
+  if (ok) {
+    pass++
+    console.log(`  ✓  [OPTS] ${c.label}`)
+  } else {
+    fail++
+    console.log(`  ✗  [OPTS] ${c.label}`)
+    console.log(`        esperado ${JSON.stringify(c.expected)}`)
+    console.log(`        obteve   ${JSON.stringify(got)}`)
+    failures.push(c.label)
+  }
+}
+
+// ── inferIntent: propagação do multipack à intent ─────────────────────────────
+//
+// inferIntent passa multipack só quando count > 1 e perPack > 0; só para
+// PACKAGED_WEIGHT/PACKAGED_VOLUME (COUNTABLE_PACKAGED é deliberadamente excluído).
+
+console.log('\n── inferIntent (multipack) ──')
+const INTENT_MULTIPACK_CASES: Array<{
+  label:    string
+  args:     Parameters<typeof inferIntent>[0]
+  expected: ArticleIntent
+}> = [
+  { label: 'mL + caixa 6000 + multipack 6×1000',
+    args: { unit: 'mL',
+            supplierSeed: { order_unit: 'caixa', conversion_factor: 6000, source: 'detected' },
+            multipack: { count: 6, perPack: 1000 } },
+    expected: { kind: 'PACKAGED_VOLUME', orderUnit: 'caixa', basePerOrder: 6000,
+                multipack: { count: 6, perPack: 1000 } } },
+  { label: 'g + pack 800 + multipack 4×200',
+    args: { unit: 'g',
+            supplierSeed: { order_unit: 'pack', conversion_factor: 800, source: 'detected' },
+            multipack: { count: 4, perPack: 200 } },
+    expected: { kind: 'PACKAGED_WEIGHT', orderUnit: 'pack', basePerOrder: 800,
+                multipack: { count: 4, perPack: 200 } } },
+  { label: 'count=1 não conta como multipack',
+    args: { unit: 'mL',
+            supplierSeed: { order_unit: 'caixa', conversion_factor: 1000, source: 'detected' },
+            multipack: { count: 1, perPack: 1000 } },
+    expected: { kind: 'PACKAGED_VOLUME', orderUnit: 'caixa', basePerOrder: 1000 } },
+  { label: 'COUNTABLE_PACKAGED não recebe multipack (excluído por design)',
+    args: { unit: 'un',
+            supplierSeed: { order_unit: 'caixa', conversion_factor: 180, source: 'detected' },
+            multipack: { count: 6, perPack: 30 } },
+    expected: { kind: 'COUNTABLE_PACKAGED', orderUnit: 'caixa', perPack: 180 } },
+]
+
+for (const c of INTENT_MULTIPACK_CASES) {
+  const got = inferIntent(c.args)
+  const ok  = JSON.stringify(got) === JSON.stringify(c.expected)
+  if (ok) {
+    pass++
+    console.log(`  ✓  [INTENT-MP] ${c.label}`)
+  } else {
+    fail++
+    console.log(`  ✗  [INTENT-MP] ${c.label}`)
+    console.log(`        esperado ${JSON.stringify(c.expected)}`)
+    console.log(`        obteve   ${JSON.stringify(got)}`)
+    failures.push(c.label)
   }
 }
 

@@ -142,7 +142,7 @@ const INGREDIENT_KEYWORDS: Array<{ words: string[]; category: string }> = [
     category: 'Lacticínios e Ovos',
     words: [
       // Lacticínios
-      'leite', 'natas', 'manteiga', 'queijo', 'iogurte', 'iogurte grego',
+      'leite', 'nata', 'natas', 'manteiga', 'queijo', 'iogurte', 'iogurte grego',
       'requeijão', 'mozzarella', 'mozarela', 'burrata', 'brie',
       'camembert', 'parmesão', 'parmesan', 'parmigiano', 'ricotta',
       'mascarpone', 'creme fraiche', 'crème fraîche', 'gorgonzola',
@@ -150,6 +150,7 @@ const INGREDIENT_KEYWORDS: Array<{ words: string[]; category: string }> = [
       'roquefort', 'stilton', 'manchego', 'pecorino', 'provolone',
       'halloumi', 'feta', 'cottage', 'kefir', 'buttermilk',
       'soro de leite', 'whey', 'creme de leite',
+      'creme culinário', 'creme culinario',
       // Ovos
       'ovo', 'ovos', 'clara', 'gema',
     ],
@@ -341,7 +342,7 @@ export function suggestCategory(ctx: {
 // ── suggestUnit ───────────────────────────────────────────────────────────────
 
 const UNIT_ML_WORDS = [
-  'leite', 'natas', 'creme de leite', 'kefir', 'buttermilk',
+  'leite', 'nata', 'natas', 'creme de leite', 'kefir', 'buttermilk',
   'sumo', 'néctar', 'nectar', 'água', 'agua', 'refrigerante',
   'cerveja', 'vinho', 'espumante', 'prosecco', 'champagne', 'champanhe',
   'licor', 'aguardente', 'brandy', 'cognac', 'whisky', 'whiskey',

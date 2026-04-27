@@ -29,6 +29,28 @@ export type SupplierSeed = {
   source: 'detected' | 'inferred'
 }
 
+/**
+ * Discriminador de intenção do artigo, derivado puramente de unit + supplierSeed.
+ *
+ * Existe para o ArticleForm decidir, sem ler fornecedores nem article_sizes,
+ * em que unidade visual deve aceitar o stock mínimo:
+ *   COUNTABLE_UNIT       → un
+ *   WEIGHT_LOOSE         → kg (visual) → g (DB)
+ *   VOLUME               → L  (visual) → mL (DB)
+ *   PACKAGED_WEIGHT      → orderUnit (caixa, saco...) → g (DB)
+ *   PACKAGED_VOLUME      → orderUnit                  → mL (DB)
+ *   COUNTABLE_PACKAGED   → orderUnit                  → un (DB)
+ *
+ * Não é persistido. Não conhece DB. Só conhece o que `classifyLine` produziu.
+ */
+export type ArticleIntent =
+  | { kind: 'COUNTABLE_UNIT' }
+  | { kind: 'WEIGHT_LOOSE' }
+  | { kind: 'VOLUME' }
+  | { kind: 'PACKAGED_WEIGHT';   orderUnit: string; basePerOrder: number; multipack?: { count: number; perPack: number; innerLabel?: string } }
+  | { kind: 'PACKAGED_VOLUME';   orderUnit: string; basePerOrder: number; multipack?: { count: number; perPack: number; innerLabel?: string } }
+  | { kind: 'COUNTABLE_PACKAGED'; orderUnit: string; perPack: number }
+
 export type ArticleDraft = {
   rawInput:          string
   /** Nome canónico (DICT + aliases aplicados) */
@@ -53,6 +75,137 @@ export type ArticleDraft = {
    * em base_unit. Não usado para cálculos de stock/encomenda.
    */
   detected_multipack?: { count: number; perPack: number }
+  /** Intenção derivada (puro). Driver de UX para escolher a unidade do par_level. */
+  intent: ArticleIntent
+}
+
+// ── Inferência de intenção ────────────────────────────────────────────────────
+
+/**
+ * Deriva a intenção de um artigo a partir do `unit` final, do `supplierSeed`
+ * e (opcional) do multipack detetado pelo parser.
+ *
+ * Pura, idempotente, sem heurísticas extra: não inventa packaging, não infere
+ * "operational unit" para palavras desconhecidas.
+ *
+ * Quando há `order_unit` MAS `conversion_factor` em falta (ex: "2 caixas"
+ * sem peso), cai para *_LOOSE/COUNTABLE_UNIT — não fingimos saber a
+ * embalagem. O fornecedor mais tarde pode confirmar.
+ *
+ * Multipack: anexado às variantes PACKAGED_WEIGHT/PACKAGED_VOLUME quando
+ * `count > 1` e `perPack > 0`. Permite a getCountingModeOptions oferecer
+ * a alternativa "unidade individual". COUNTABLE_PACKAGED é deliberadamente
+ * excluído (caso "ovos caixa 180 uni" não pede contagem por unidade).
+ */
+export function inferIntent(args: {
+  unit:          'g' | 'mL' | 'un'
+  supplierSeed?: SupplierSeed
+  multipack?:    { count: number; perPack: number; innerLabel?: string }
+}): ArticleIntent {
+  const { unit, supplierSeed, multipack } = args
+  const orderUnit = supplierSeed?.order_unit
+  const factor    = supplierSeed?.conversion_factor
+
+  const mp = multipack && multipack.count > 1 && multipack.perPack > 0
+    ? {
+        count:    multipack.count,
+        perPack:  multipack.perPack,
+        ...(multipack.innerLabel ? { innerLabel: multipack.innerLabel } : {}),
+      }
+    : undefined
+
+  if (orderUnit && factor != null && factor > 0) {
+    if (unit === 'g')  return { kind: 'PACKAGED_WEIGHT',   orderUnit, basePerOrder: factor, ...(mp ? { multipack: mp } : {}) }
+    if (unit === 'mL') return { kind: 'PACKAGED_VOLUME',   orderUnit, basePerOrder: factor, ...(mp ? { multipack: mp } : {}) }
+    return                       { kind: 'COUNTABLE_PACKAGED', orderUnit, perPack: factor }
+  }
+
+  if (unit === 'g')  return { kind: 'WEIGHT_LOOSE' }
+  if (unit === 'mL') return { kind: 'VOLUME' }
+  return                     { kind: 'COUNTABLE_UNIT' }
+}
+
+// ── Modo de contagem (UI) ─────────────────────────────────────────────────────
+
+export type CountingMode = {
+  /** Unidade visível ao chef: 'kg', 'L', 'un', 'caixa', 'saco', ... */
+  count_unit:     string
+  /** Quantas unidades base (g/mL/un) cabem em 1 count_unit. */
+  base_per_unit:  number
+  /** True quando count_unit é o default da família (kg/L/un) sem packaging — sinaliza que adicionar fornecedor/tamanho dá precisão. Não bloqueia. */
+  needs_supplier: boolean
+}
+
+/**
+ * Como o chef conta este artigo na prática. Pure. Deriva de:
+ *   1. article_sizes (fonte estável e persistida; primeiro sort_order ganha)
+ *   2. ArticleIntent (parser inference)
+ *   3. base_unit (fallback dentro do switch)
+ *
+ * Single source of truth para a "Conta em: X" pill na UI. Não inventa packaging:
+ * se intent é WEIGHT_LOOSE/VOLUME/COUNTABLE_UNIT e não há size, o count cai no
+ * default da família e marca `needs_supplier=true`.
+ */
+export function getCountingMode(args: {
+  intent:        ArticleIntent
+  articleSizes?: { label: string; base_per_unit: number }[]
+}): CountingMode {
+  const { intent, articleSizes } = args
+
+  if (articleSizes && articleSizes.length > 0) {
+    const s = articleSizes[0]
+    return { count_unit: s.label, base_per_unit: s.base_per_unit, needs_supplier: false }
+  }
+
+  switch (intent.kind) {
+    case 'WEIGHT_LOOSE':
+      return { count_unit: 'kg', base_per_unit: 1000, needs_supplier: true }
+    case 'VOLUME':
+      return { count_unit: 'L',  base_per_unit: 1000, needs_supplier: true }
+    case 'COUNTABLE_UNIT':
+      return { count_unit: 'un', base_per_unit: 1,    needs_supplier: true }
+    case 'PACKAGED_WEIGHT':
+    case 'PACKAGED_VOLUME':
+      return { count_unit: intent.orderUnit, base_per_unit: intent.basePerOrder, needs_supplier: false }
+    case 'COUNTABLE_PACKAGED':
+      return { count_unit: intent.orderUnit, base_per_unit: intent.perPack, needs_supplier: false }
+  }
+}
+
+/**
+ * Devolve o conjunto de modos de contagem disponíveis. O primeiro elemento é
+ * sempre o default (= `getCountingMode`). Há uma alternativa quando o input
+ * descreve um multipack com peso/volume conhecido por unidade individual:
+ *
+ *   "leite 1L pack 6uni" → [{ pack, 6000 }, { unidade, 1000 }]
+ *   "frango caixa 10kg"  → [{ caixa, 10000 }]   // sem multipack, só primary
+ *   "ovos caixa 180 uni" → [{ caixa, 180 }]     // COUNTABLE_PACKAGED não tem alt
+ *   "frango 10kg"        → [{ kg, 1000 }]       // WEIGHT_LOOSE
+ *
+ * article_sizes vence sempre — chef já fixou. UI consome com toggle pill quando
+ * length > 1.
+ */
+export function getCountingModeOptions(args: {
+  intent:        ArticleIntent
+  articleSizes?: { label: string; base_per_unit: number }[]
+}): CountingMode[] {
+  const primary = getCountingMode(args)
+
+  if (args.articleSizes && args.articleSizes.length > 0) return [primary]
+
+  if ((args.intent.kind === 'PACKAGED_WEIGHT' || args.intent.kind === 'PACKAGED_VOLUME')
+      && args.intent.multipack) {
+    const { perPack, innerLabel } = args.intent.multipack
+    // Nested packaging: usa o label interno escrito pelo chef ("pacote",
+    // "garrafa") em vez de "unidade" genérico. Para multipack simples
+    // ("6uni"), innerLabel é undefined → fica "unidade".
+    return [
+      primary,
+      { count_unit: innerLabel ?? 'unidade', base_per_unit: perPack, needs_supplier: false },
+    ]
+  }
+
+  return [primary]
 }
 
 // ── Constantes internas ───────────────────────────────────────────────────────
@@ -160,6 +313,8 @@ export function buildArticleDraft(
     }
   }
 
+  const intent = inferIntent({ unit: normalized.unit, supplierSeed, multipack: detectedMultipack })
+
   return {
     rawInput:           raw,
     name:               normalized.name,
@@ -174,6 +329,7 @@ export function buildArticleDraft(
     detected_qty:       detectedQty,
     detected_label:     detectedLabel,
     detected_multipack: detectedMultipack,
+    intent,
   }
 }
 

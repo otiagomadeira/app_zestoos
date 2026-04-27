@@ -135,18 +135,32 @@ export function extractName(line: string, cl: ClassifiedLine): string {
       }
       // Label depois do qty (multipack-equivalente "1lt caixa 6 uni …"):
       // strip do label + número adjacente + token "uni" em `after`.
+      // O regex aceita o número solto ("4") OU colado ao suffix de contagem
+      // ("6uni", "6un") OU colado ao suffix de peso/volume ("6l", "800g",
+      // "1kg") — porque o classifyLine também interpreta esses como total
+      // do pack na mesma família.
+      const COUNT_TOKEN_RE = /^\d+[.,]?\d*(?:uni|unis|unid|unids|unidades?|un|kg|g|mg|gr|grs|gramas?|litros?|mililitros?|lt[s]?|cl|dl|ml|l)?$/i
       const afterWords = after.split(/\s+/).filter(Boolean)
       const idxAfter   = afterWords.map(w => w.toLowerCase()).indexOf(cl.label!)
       if (idxAfter >= 0) {
         let endIdx = idxAfter + 1
-        if (endIdx < afterWords.length && /^\d+[.,]?\d*$/.test(afterWords[endIdx])) {
+        if (endIdx < afterWords.length && COUNT_TOKEN_RE.test(afterWords[endIdx])) {
           endIdx++
           if (endIdx < afterWords.length && UNIT_QTY_TOKENS.has(afterWords[endIdx].toLowerCase())) {
             endIdx++
           }
         }
         const cleanedAfter = [...afterWords.slice(0, idxAfter), ...afterWords.slice(endIdx)]
-        const result = [...beforeWords, ...cleanedAfter].join(' ').trim()
+        // Nested packaging: cl.label é o outer (já strippado de `after`).
+        // O innerLabel ("pacote", "garrafa") está em `before` antes do qty —
+        // tem de ser strippado também para não ficar pendurado no nome.
+        let cleanedBefore = beforeWords
+        const innerLabel = cl.multipack?.innerLabel
+        if (innerLabel) {
+          const innerIdx = beforeWords.map(w => w.toLowerCase()).lastIndexOf(innerLabel)
+          if (innerIdx >= 0) cleanedBefore = stripLabelAndConnectors(beforeWords, innerIdx)
+        }
+        const result = [...cleanedBefore, ...cleanedAfter].join(' ').trim()
         return result || before || after || line
       }
       return beforeWords.join(' ') || after || line
