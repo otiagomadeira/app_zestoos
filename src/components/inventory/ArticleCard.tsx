@@ -85,7 +85,7 @@ export default function ArticleCard({
         border:       `1px solid ${isExpanded ? 'var(--action)' : 'var(--border)'}`,
         borderRadius: 10,
         overflow:     'hidden',
-        transition:   'border-color 0.15s, background 0.15s',
+        transition:   'border-color 0.15s, background 0.15s, box-shadow 0.18s',
         // CRÍTICO: o outer é flex item de uma lista flex-column. Sem min-height
         // explícito o flex-shrink:1 default deixa o outer encolher abaixo dos
         // 56px do inner role=button (em iOS Safari isto colapsa para 2px =
@@ -94,6 +94,7 @@ export default function ArticleCard({
         // porque o seu conteúdo intrinsic (input 44 + buttons) excede 56.
         minHeight:    56,
         flexShrink:   0,
+        boxShadow:    isExpanded ? '0 4px 14px rgba(196, 106, 45, 0.18)' : 'none',
       }}
     >
       <div

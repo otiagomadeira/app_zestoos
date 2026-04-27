@@ -366,6 +366,8 @@ function CategoryChip({
         whiteSpace:   'nowrap',
         cursor:       'pointer',
         touchAction:  'manipulation',
+        boxShadow:    active ? '0 3px 10px rgba(196, 106, 45, 0.18)' : 'none',
+        transition:   'box-shadow 0.18s, background 0.15s',
       }}
     >
       {label}

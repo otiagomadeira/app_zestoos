@@ -130,9 +130,11 @@ const cellInput: React.CSSProperties = {
 // Estilo para inputs numéricos hero (Stock mínimo, Peso por unidade).
 // Mono font para os números ganharem o peso visual que merecem; o chef
 // procura este número em primeiro lugar quando consulta a ficha.
+// Width é definido pelo container (flex em row com unit chip ao lado).
 const numericInputStyle: React.CSSProperties = {
   ...inputStyle,
-  width:         140,
+  flex:          1,
+  minWidth:      0,
   height:        56,
   fontSize:      22,
   fontFamily:    "'JetBrains Mono', monospace",
@@ -434,14 +436,13 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
         }
       `}</style>
 
-      {/* Header editorial — chevron borderless, eyebrow tracked com middle
-          dot acentuado, título Playfair como protagonista. Sente-se como o
-          topo de uma página de caderno de receitas, não um header de form. */}
+      {/* Header — eyebrow sozinho ("EDITAR · ARTIGO" / "NOVO · ARTIGO").
+          O nome vive no campo NOME do body, sem duplicação no header. */}
       <div style={{
         flexShrink: 0,
-        padding:    '24px 28px 22px',
+        padding:    '20px 28px 18px',
         display:    'flex',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         gap:        16,
       }}>
         <button
@@ -462,44 +463,25 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             alignItems:     'center',
             justifyContent: 'center',
             flexShrink:     0,
-            marginTop:      4,
             touchAction:    'manipulation',
             transition:     'background 0.18s, color 0.18s, transform 0.18s',
           }}
         >
           ←
         </button>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <p style={{
-            fontSize:      9,
-            color:         'var(--action)',
-            letterSpacing: '0.22em',
-            fontWeight:    700,
-            margin:        0,
-            marginBottom:  6,
-            textTransform: 'uppercase',
-          }}>
-            {isEdit ? 'Editar' : 'Novo'} <span style={{ color: 'var(--text-subtle)', margin: '0 4px' }}>·</span> Artigo
-          </p>
-          <h3 style={{
-            fontFamily:    "'Playfair Display', serif",
-            fontSize:      30,
-            fontWeight:    600,
-            color:         'var(--text)',
-            margin:        0,
-            whiteSpace:    'nowrap',
-            overflow:      'hidden',
-            textOverflow:  'ellipsis',
-            letterSpacing: '-0.02em',
-            lineHeight:    1.1,
-          }}>
-            {isEdit ? existing.name : 'Novo Artigo'}
-          </h3>
-        </div>
+        <p style={{
+          fontSize:      10,
+          color:         'var(--action)',
+          letterSpacing: '0.24em',
+          fontWeight:    700,
+          margin:        0,
+          textTransform: 'uppercase',
+        }}>
+          {isEdit ? 'Editar' : 'Novo'} <span style={{ color: 'var(--text-subtle)', margin: '0 4px' }}>·</span> Artigo
+        </p>
       </div>
 
-      {/* Hairline separator — refined, 1px, full-width pelo padding lateral
-          do corpo. Substitui o borderBottom no header (que estava colado). */}
+      {/* Hairline separator */}
       <div style={{
         flexShrink: 0,
         height:     1,
@@ -649,7 +631,12 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             técnicas em gramas. */}
         <div>
           <SectionTitle>Stock</SectionTitle>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{
+            display:             'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap:                 24,
+            alignItems:          'start',
+          }}>
             {/* Stock mínimo — input na unidade do chef (caixa, frasco,
                 garrafão); par_level continua guardado em base_unit. Fonte
                 de unidade: link preferred → qualquer link válido → seed
@@ -687,18 +674,18 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                 }}>
                   {parMinUnit ?? unit}
                 </span>
-                {parUseOrderUnit && (parseFloat(parLevel) || 0) > 0 && (
-                  <span style={{
-                    fontSize:   12,
-                    color:      'var(--text-subtle)',
-                    fontFamily: "'JetBrains Mono', monospace",
-                    flexShrink: 0,
-                    marginLeft: 'auto',
-                  }}>
-                    ≈ {formatStockQty(parseFloat(parLevel), unit)}
-                  </span>
-                )}
               </div>
+              {parUseOrderUnit && (parseFloat(parLevel) || 0) > 0 && (
+                <p style={{
+                  fontSize:   11,
+                  color:      'var(--text-subtle)',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  marginTop:  6,
+                  margin:     '6px 0 0',
+                }}>
+                  ≈ {formatStockQty(parseFloat(parLevel), unit)}
+                </p>
+              )}
               <p style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 8, lineHeight: 1.5 }}>
                 Quando o stock baixar deste valor, o Zesto sugere encomenda.
               </p>
@@ -734,18 +721,17 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                     }}>
                       g
                     </span>
-                    {hasValue && (
-                      <span style={{
-                        fontSize:   12,
-                        color:      outOfRange ? 'var(--warning)' : 'var(--text-subtle)',
-                        fontFamily: "'JetBrains Mono', monospace",
-                        flexShrink: 0,
-                        marginLeft: 'auto',
-                      }}>
-                        1 un ≈ {gNum} g
-                      </span>
-                    )}
                   </div>
+                  {hasValue && (
+                    <p style={{
+                      fontSize:   11,
+                      color:      outOfRange ? 'var(--warning)' : 'var(--text-subtle)',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      margin:     '6px 0 0',
+                    }}>
+                      1 un ≈ {gNum} g
+                    </p>
+                  )}
                   {outOfRange && (
                     <p style={{ fontSize: 11, color: 'var(--warning)', marginTop: 8, marginBottom: 0, lineHeight: 1.5 }}>
                       Valor fora do esperado (5–2000g) — confirma se correto.
