@@ -134,18 +134,47 @@ function parseQty(raw: string): number {
  * devolve o label de embalagem imediatamente antes (se existir).
  * Ex: "Rúcula saco 200gr" com matchIndex=8 → 'saco'
  *      "Mel frasco de 1KG"               → 'frasco' (skip do conector "de")
+ *
+ * Também detecta multipack-equivalente quando entre o label e a qty existe
+ * "<N> <uni-suffix>" — ex.: "Leite pack 6 uni 1lt".
+ *   words = [leite, pack, 6, uni]
+ *   skip uni-suffix + bare number → land on "pack"
+ *   devolve { label: 'pack', multipackCount: 6 }
+ *
+ * Só promove a multipack quando count > 1 (evita "pack 1 uni 1L" silenciosamente).
  */
 const LABEL_CONNECTORS = new Set(['de', 'da', 'do', 'dos', 'das'])
 
-function findAdjacentPackagingLabel(line: string, matchIndex: number): string | null {
+const UNI_SUFFIX_RE = /^(?:uni|unis|unid|unids|unidades?|un)$/i
+
+export type AdjacentLabelMatch = {
+  label:           string
+  multipackCount?: number
+}
+
+function findAdjacentPackagingLabel(line: string, matchIndex: number): AdjacentLabelMatch | null {
   const before = line.slice(0, matchIndex).trim()
   if (!before) return null
   const words = before.split(/\s+/)
   // Salta conectores PT (de, da, do…) para encontrar o label real antes
   let i = words.length - 1
   while (i >= 0 && LABEL_CONNECTORS.has(words[i].toLowerCase())) i--
+
+  // Multipack-equivalente: "<count> <uni-suffix>" entre label e qty.
+  // Conservador: só salta quando count > 1 (count=1 é ambíguo, deixa cair).
+  let multipackCount: number | undefined
+  if (i >= 1 && UNI_SUFFIX_RE.test(words[i]) && /^\d+$/.test(words[i - 1])) {
+    const c = parseInt(words[i - 1], 10)
+    if (c > 1) {
+      multipackCount = c
+      i -= 2
+      while (i >= 0 && LABEL_CONNECTORS.has(words[i].toLowerCase())) i--
+    }
+  }
+
   const target = words[i]?.toLowerCase() ?? ''
-  return PACKAGING_LABELS.has(target) ? target : null
+  if (!PACKAGING_LABELS.has(target)) return null
+  return multipackCount ? { label: target, multipackCount } : { label: target }
 }
 
 /**
@@ -220,11 +249,18 @@ function resolveQtyMatch(
   baseUnit:    'g' | 'mL',
   qty:         number,
 ): ClassifiedLine {
-  let label    = findAdjacentPackagingLabel(line, matchIndex)
+  const labelMatch = findAdjacentPackagingLabel(line, matchIndex)
+  let label    = labelMatch?.label ?? null
   let total    = qty
   let multipack: { count: number; perPack: number; innerLabel?: string } | undefined
 
-  if (!label) {
+  if (labelMatch?.multipackCount) {
+    // Label-before com count "uni" entre label e qty:
+    // "leite pack 6 uni 1lt" → label='pack', count=6, perPack=qty.
+    // Caminho fechado: não tenta nested-outer porque já temos sinal completo.
+    multipack = { count: labelMatch.multipackCount, perPack: qty }
+    total     = labelMatch.multipackCount * qty
+  } else if (!label) {
     const labelAfter = findAdjacentPackagingLabelAfter(line, matchIndex + matchLength)
     if (labelAfter) {
       label = labelAfter
@@ -313,8 +349,11 @@ export function classifyLine(raw: string): ClassifiedLine {
   }
 
   // ── 1.5 Multipack (count × per-pack) ──────────────────────────────────────
+  // Guard count > 1: "1x6lt" não é multipack — é volume simples 6L. Sem este
+  // guard, o sistema inventava {count:1, perPack:6L}, dando false positive
+  // silencioso ao chef.
   const multipackMatch = line.match(MULTIPACK_RE)
-  if (multipackMatch && multipackMatch.index !== undefined) {
+  if (multipackMatch && multipackMatch.index !== undefined && parseFloat(multipackMatch[1]) > 1) {
     const count   = parseFloat(multipackMatch[1])
     const each    = parseQty(multipackMatch[2])
     const rawUnit = multipackMatch[3].toLowerCase()
@@ -343,7 +382,10 @@ export function classifyLine(raw: string): ClassifiedLine {
     }
 
     const total = count * perPack
-    const label = findAdjacentPackagingLabel(line, multipackMatch.index)
+    // Branch MULTIPACK_RE já tem o count vindo da regex (Nx...). Aqui só nos
+    // interessa o label simples — descartamos qualquer multipackCount derivado
+    // de findAdjacentPackagingLabel para não duplicar.
+    const label = findAdjacentPackagingLabel(line, multipackMatch.index)?.label ?? null
 
     return {
       type: baseUnit === 'g' ? 'weight' : 'volume',

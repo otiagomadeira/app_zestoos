@@ -390,6 +390,53 @@ const CASES: Case[] = [
     expect: { confidence: 'high', reasons: [] } },
   { tag: 'REGRESSION', input: 'molho barbecue',
     expect: { confidence: 'high', reasons: [] } },
+
+  // ── PATCH 2026-04-27: confirmações pedidas pelo chef após auditoria ───────
+  // Adicionados ANTES da implementação para capturar o estado actual.
+
+  // P1: multipack-equivalente — label antes da qty + count "uni" entre os dois
+  // "leite pack 6 uni 1lt" → o label "pack" não está adjacente ao "1lt"; o
+  // token "6" + "uni" fica de permeio. findAdjacentPackagingLabel deve saltar
+  // tokens uni/un/unidade quando procura embalagem.
+  { tag: 'CRITICAL', input: 'Leite pack 6 uni 1lt',
+    expect: { name: 'Leite', unit: 'mL', orderUnit: 'pack', conversionFactor: 6000,
+              multipackCount: 6, multipackPerPack: 1000 } },
+
+  // P2: count=1 NÃO é multipack. "Leite 1x6lt" não deve inventar "1 pacote
+  // de 6L". MULTIPACK_RE deve rejeitar count <= 1. Comportamento esperado:
+  // multipackCount=null e o sistema marca como volume simples ou ambíguo.
+  { tag: 'CRITICAL', input: 'Leite 1x6lt',
+    expect: { multipackCount: null, multipackPerPack: null } },
+
+  // P3: "molho" sozinho com qty é demasiado genérico. Não deve sair HIGH —
+  // chef ficaria sem saber qual molho é. name_too_generic é hard-low → LOW.
+  // ("molho inglês" / "molho madeira" / "molho ostra" continuam HIGH por
+  // terem 2 palavras → isTooGeneric retorna false.)
+  { tag: 'CRITICAL', input: 'molho garrafa 1L',
+    expect: { confidence: 'low', reasons: ['name_too_generic'] } },
+
+  // P6 (KNOWN GAP — não corrigido neste patch):
+  // "saco farinha 25kg" — pattern LABEL + NAME + QTY. classifyLine procura
+  // label adjacente à qty ("farinha" antes de "25kg") e não encontra. O label
+  // está antes do nome, não antes da qty.
+  //
+  // Fix seguro requer distinguir "saco farinha" (embalagem + ingrediente) de
+  // "saco lixo 50L" / "saco vácuo" / "saco plástico" (nome legítimo que começa
+  // por palavra-embalagem). Isto exige consulta ao INGREDIENT_KEYWORDS dentro
+  // de classifyLine — acoplamento entre camadas que não cabe num patch pequeno.
+  //
+  // Workaround para o chef: escrever "farinha saco 25kg" (ordem natural) — caso
+  // P7 abaixo confirma que funciona correctamente.
+  //
+  // Este teste fixa o comportamento ACTUAL para evitar regressão silenciosa
+  // até que o gap seja resolvido em patch dedicado.
+  { tag: 'REGRESSION', input: 'saco farinha 25kg',
+    expect: { name: 'Saco Farinha', orderUnit: null, conversionFactor: null } },
+
+  // P7: "farinha saco 25kg" — caso standard de label adjacente. Deve já
+  // funcionar; teste de não-regressão.
+  { tag: 'CRITICAL', input: 'farinha saco 25kg',
+    expect: { name: 'Farinha', unit: 'g', orderUnit: 'saco', conversionFactor: 25000 } },
 ]
 
 let pass = 0

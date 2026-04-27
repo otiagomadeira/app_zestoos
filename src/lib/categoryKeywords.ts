@@ -2,25 +2,22 @@
  * Sistema de sugestão de categoria e unidade base.
  *
  * Categorias: Carnes | Peixe e Marisco | Frutas e Legumes |
- *             Lacticínios e Ovos | Mercearia | Congelados | Bebidas |
+ *             Lacticínios e Ovos | Mercearia | Bebidas |
  *             Embalagens e Descartáveis
  *
+ * "Congelado", "fresco" e "refrigerado" não são categorias — são adjetivos
+ * que distinguem produtos operacionalmente diferentes (ex: "Perna de Frango
+ * Congelada" ≠ "Perna de Frango Fresca"). Ficam no nome; a categoria é
+ * decidida pelo ingrediente base.
+ *
  * Prioridade de correspondência:
- *   1. Formato congelado (congelado, iqf) → Congelados
- *   2. Bebidas (keywords específicas) — antes de container words para evitar
+ *   1. Bebidas (keywords específicas) — antes de container words para evitar
  *      "Cerveja em lata" → Mercearia
- *   3. Container words (lata, conserva, pelado, frasco…) → Mercearia
- *   4. Keywords de ingrediente (Carnes, Peixe, Frutas, Lacticínios, Mercearia, Embalagens)
- *   5. Fallback por unidade líquida (mL) → Bebidas, confident=false
- *   6. null, confident=false
+ *   2. Container words (lata, conserva, pelado, frasco…) → Mercearia
+ *   3. Keywords de ingrediente (Carnes, Peixe, Frutas, Lacticínios, Mercearia, Embalagens)
+ *   4. Fallback por unidade líquida (mL) → Bebidas, confident=false
+ *   5. null, confident=false
  */
-
-// ── Overrides de formato: congelados ─────────────────────────────────────────
-
-const FROZEN_WORDS = [
-  'congelado', 'congelada', 'congelados', 'congeladas', 'iqf',
-  'ultracongelado', 'ultracongelada',
-]
 
 // ── Container/formato: indica produto processado → Mercearia ─────────────────
 // Não inclui saco/caixa/pacote/embalagem (neutros para categoria)
@@ -235,7 +232,6 @@ export const ARTICLE_CATEGORIES = [
   'Frutas e Legumes',
   'Lacticínios e Ovos',
   'Mercearia',
-  'Congelados',
   'Bebidas',
   'Embalagens e Descartáveis',
 ] as const
@@ -330,12 +326,7 @@ export function suggestCategory(ctx: {
   const lower    = stripDiacritics(name.toLowerCase())
   const lowerRaw = stripDiacritics((raw ?? name).toLowerCase())
 
-  // 1. Formato congelado (incondicional)
-  if (FROZEN_WORDS.some(w => containsWord(lowerRaw, w) || containsWord(lower, w))) {
-    return { category: 'Congelados', confident: true, reason: 'frozen-format' }
-  }
-
-  // 2. Priority phrases — produtos compostos com palavra ambígua de outra
+  // 1. Priority phrases — produtos compostos com palavra ambígua de outra
   //    categoria ("tomate coração de boi", "atum lombo"). Avaliado antes do
   //    shortcut Bebidas para garantir que palavras como 'lombo'/'coração'
   //    não decidem mal pelo loop genérico.
@@ -345,27 +336,27 @@ export function suggestCategory(ctx: {
     }
   }
 
-  // 3. Bebidas por keyword de ingrediente (antes de container words para não
+  // 2. Bebidas por keyword de ingrediente (antes de container words para não
   //    reclassificar "Cerveja em lata" como Mercearia)
   const bebidasGroup = INGREDIENT_KEYWORDS.find(g => g.category === 'Bebidas')!
   if (bebidasGroup.words.some(w => containsWord(lower, w))) {
     return { category: 'Bebidas', confident: true, reason: 'ingredient-keyword' }
   }
 
-  // 4. Container words → Mercearia (lata, conserva, pelado, frasco…)
+  // 3. Container words → Mercearia (lata, conserva, pelado, frasco…)
   const lowerLabel = stripDiacritics((label ?? '').toLowerCase())
   if (CONTAINER_WORDS.some(w => containsWord(lowerRaw, w) || lowerLabel === stripDiacritics(w))) {
     return { category: 'Mercearia', confident: true, reason: 'container-format' }
   }
 
-  // 4.5 Strong-Mercearia override (allowlist) — domina sobre o loop seguinte.
+  // 3.5 Strong-Mercearia override (allowlist) — domina sobre o loop seguinte.
   // STRONG_MERCEARIA_RE só contém palavras sem acentos, mas testamos contra
   // input já normalizado por consistência.
   if (STRONG_MERCEARIA_RE.test(lower) || STRONG_MERCEARIA_RE.test(lowerRaw)) {
     return { category: 'Mercearia', confident: true, reason: 'strong-mercearia' }
   }
 
-  // 5. Keywords de ingrediente (todos os grupos excepto Bebidas, já verificado)
+  // 4. Keywords de ingrediente (todos os grupos excepto Bebidas, já verificado)
   for (const group of INGREDIENT_KEYWORDS) {
     if (group.category === 'Bebidas') continue
     if (group.words.some(w => containsWord(lower, w))) {

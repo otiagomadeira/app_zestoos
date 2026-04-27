@@ -60,6 +60,14 @@ Fechar loop real: **Contar → Decidir → Encomendar** (sem fricção)
 - Lista real/difícil de 55 produtos validada no Bulk Import: 46 prontos,
   7 duplicados pré-existentes, **0 a resolver**, 2 size variants.
 
+### Refinações de modelo (pós-fecho)
+- "Congelados" removido das categorias canónicas. "Congelado", "fresco"
+  e "refrigerado" são adjetivos que distinguem produtos operacionalmente
+  diferentes (perna fresca ≠ perna congelada) — preservam-se no nome; a
+  categoria é decidida pelo ingrediente base. Artigos legados com
+  `category='Congelados'` caem em "Sem categoria" até reclassificação
+  manual (sem migração de dados nesta tarefa).
+
 ### Backlog técnico — Artigos (não bloqueiam o MVP)
 1. **Espargos → Peixe e Marisco**. `lower.includes(w)` em
    `src/lib/categoryKeywords.ts` colide com substring "pargo".

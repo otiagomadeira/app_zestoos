@@ -84,6 +84,14 @@ const GENERIC_CONTAINER_WORDS = new Set([
   'tabuleiro', 'tabuleiros',
 ])
 
+// Palavras de ingrediente que isoladas não chegam para definir o artigo —
+// "molho" pode ser inglês, soja, ostra, hoisin, picante… Chef precisa de
+// confirmar qual. Multi-palavra ("molho inglês") não dispara — basta isTooGeneric
+// rejeitar nomes com espaço.
+const GENERIC_INGREDIENT_WORDS = new Set([
+  'molho', 'molhos',
+])
+
 // ── Helpers internos ─────────────────────────────────────────────────────────
 
 function stripDiacritics(s: string): string {
@@ -116,9 +124,10 @@ function isCodeName(name: string): boolean {
 
 function isTooGeneric(name: string): boolean {
   const lower = stripDiacritics(name.toLowerCase().trim())
-  // Apenas quando o nome final é uma única palavra que é container word.
+  // Apenas quando o nome final é uma única palavra. Multi-palavra ("Molho
+  // Inglês", "Caixa Cartão") nunca dispara — chef já qualificou.
   if (/\s/.test(lower)) return false
-  return GENERIC_CONTAINER_WORDS.has(lower)
+  return GENERIC_CONTAINER_WORDS.has(lower) || GENERIC_INGREDIENT_WORDS.has(lower)
 }
 
 function hasDisposableKeyword(rawInput: string): boolean {

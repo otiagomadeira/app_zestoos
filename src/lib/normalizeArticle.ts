@@ -211,7 +211,26 @@ export function extractName(line: string, cl: ClassifiedLine): string {
       const beforeWords = before.split(/\s+/).filter(Boolean)
       const idxBefore   = beforeWords.map(w => w.toLowerCase()).lastIndexOf(cl.label!)
       if (idxBefore >= 0) {
-        const cleaned = stripLabelAndConnectors(beforeWords, idxBefore)
+        // Strip do label + conectores (mesma lógica do helper) + extensão para
+        // multipack-equivalente: quando classifyLine detectou cl.multipack, os
+        // tokens `<bare-number> <uni-suffix>` imediatamente após o label são
+        // a contagem e devem sair do nome.
+        // Ex: "Leite pack 6 uni 1lt" → strip [pack, 6, uni] → "Leite".
+        // Conservador: só salta quando os DOIS tokens estão presentes (não
+        // strippa números soltos legítimos como "Coca 0 Açúcar pack 6x1L").
+        let start = idxBefore
+        let end   = idxBefore + 1
+        while (end < beforeWords.length && NAME_CONNECTORS.has(beforeWords[end].toLowerCase())) end++
+        if (
+          cl.multipack &&
+          end + 1 < beforeWords.length &&
+          /^\d+[.,]?\d*$/.test(beforeWords[end]) &&
+          UNIT_QTY_TOKENS.has(beforeWords[end + 1].toLowerCase())
+        ) {
+          end += 2
+        }
+        while (start > 0 && NAME_CONNECTORS.has(beforeWords[start - 1].toLowerCase())) start--
+        const cleaned = [...beforeWords.slice(0, start), ...beforeWords.slice(end)]
         return cleaned.join(' ').trim() || after || line
       }
       // Label depois do qty (multipack-equivalente "1lt caixa 6 uni …"):
