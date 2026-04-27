@@ -4,11 +4,29 @@ import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Article } from '@/types/database'
 import { createArticle, createArticleSizeIfMissing } from '@/lib/supabase'
-import { formatUnit } from '@/lib/units'
+import { formatUnit, formatBaseQty } from '@/lib/units'
 import { parseProductLines, recomputeDuplicates, type ParsedLine } from '@/lib/parseProductLines'
 import { suggestCategory } from '@/lib/categoryKeywords'
 import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
 import { useOrgAliases } from '@/hooks/useOrgAliases'
+import { getCountingMode, inferIntent } from '@/lib/articleDraft'
+
+// Re-deriva intent a partir da ParsedLine — evita propagar `intent` ao tipo
+// ParsedLine (single source of truth fica em articleDraft). Devolve null se
+// `line.unit` não está num estado normalizado ('g'|'mL'|'un').
+function pillCountingMode(line: ParsedLine) {
+  if (line.unit !== 'g' && line.unit !== 'mL' && line.unit !== 'un') return null
+  const factor = parseFloat(line.base_per_order)
+  const supplierSeed = line.stock_unit
+    ? {
+        order_unit:        line.stock_unit,
+        conversion_factor: !isNaN(factor) && factor > 0 ? factor : undefined,
+        source:            'detected' as const,
+      }
+    : undefined
+  const intent = inferIntent({ unit: line.unit, supplierSeed })
+  return getCountingMode({ intent })
+}
 
 // ── Estilos base (consistentes com os outros forms) ───────────────────────────
 
@@ -78,8 +96,9 @@ type LineRowProps = {
 }
 
 function LineRow({ line, onChange, onDelete, onApplySuggestion: _onApplySuggestion, onResolved, isResolved }: LineRowProps) {
-  const isInvalid = line.name.trim() === '' || line.unit.trim() === ''
+  const isInvalid   = line.name.trim() === '' || line.unit.trim() === ''
   const unitMissing = line.unit.trim() === ''
+  const cm          = pillCountingMode(line)
 
   return (
     <div style={{
@@ -92,61 +111,86 @@ function LineRow({ line, onChange, onDelete, onApplySuggestion: _onApplySuggesti
       gap:           8,
     }}>
 
-      {/* Fila 1: Nome + UN. Base */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 88px', gap: 6, alignItems: 'end' }}>
-        <div>
-          <label style={labelStyle}>NOME</label>
-          <input
-            value={line.name}
-            onChange={e => onChange(line.id, 'name', e.target.value)}
-            placeholder="Nome do produto"
-            style={{ ...inputStyle, border: line.name.trim() === '' ? `1px solid var(--error)` : inputStyle.border }}
-          />
-        </div>
-        <div>
-          {/* base_unit é sempre uma de g/mL/un — modelo de dados (CLAUDE.md
-              §6) não aceita kg/L/cl/dl como unit do artigo. Quick-pick
-              fechado evita que o chef edite para um valor que partiria
-              silenciosamente a view current_stock e os cálculos de stock. */}
-          <span style={{
-            ...labelStyle,
-            color: unitMissing ? 'var(--warning-text)' : 'var(--text-on-primary-muted)',
-          }}>
-            {unitMissing ? 'Seleciona unidade' : 'UN. BASE'}
-          </span>
-          <div style={{ display: 'flex', gap: 4 }}>
-            {(['g', 'mL', 'un'] as const).map(u => {
-              const selected = line.unit === u
-              return (
-                <button
-                  key={u}
-                  type="button"
-                  onClick={() => {
-                    onChange(line.id, 'unit', u)
-                    if (unitMissing) onResolved?.(line.id)
-                  }}
-                  style={{
-                    flex:         1,
-                    height:       44,
-                    borderRadius: 6,
-                    border:       `1px solid ${selected ? 'var(--action)' : 'var(--action-border)'}`,
-                    background:   selected ? 'var(--action)' : 'var(--action-surface)',
-                    color:        selected ? 'var(--text-on-primary)' : 'var(--action)',
-                    fontSize:     11,
-                    fontWeight:   700,
-                    cursor:       'pointer',
-                    fontFamily:   'JetBrains Mono, monospace',
-                  }}
-                >
-                  {u}
-                </button>
-              )
-            })}
-          </div>
-        </div>
+      {/* Fila 1: Nome */}
+      <div>
+        <label style={labelStyle}>NOME</label>
+        <input
+          value={line.name}
+          onChange={e => onChange(line.id, 'name', e.target.value)}
+          placeholder="Nome do produto"
+          style={{ ...inputStyle, border: line.name.trim() === '' ? `1px solid var(--error)` : inputStyle.border }}
+        />
       </div>
 
-      {/* Hint do parser — embalagem detetada */}
+      {/* Conta em — pill derivada de getCountingMode. Substitui chips g|mL|un.
+          Quando o parser não conseguiu inferir unit (unitMissing), oferece
+          fallback de 3 chips para o chef destrancar a linha sem editar nome. */}
+      {!unitMissing && cm && (
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <span style={labelStyle}>CONTA EM</span>
+          <span style={{
+            display:       'inline-flex',
+            alignItems:    'center',
+            gap:           6,
+            padding:       '4px 10px',
+            background:    'var(--border-on-primary-soft)',
+            border:        '1px solid var(--border-on-primary)',
+            borderRadius:  999,
+            fontFamily:    'JetBrains Mono, monospace',
+            fontSize:      12,
+            fontWeight:    700,
+            color:         'var(--text-on-primary)',
+            letterSpacing: '0.02em',
+          }}>
+            {cm.count_unit}
+            {cm.base_per_unit !== 1
+              && cm.count_unit !== 'kg'
+              && cm.count_unit !== 'L'
+              && cm.count_unit !== 'un'
+              && (
+              <span style={{ color: 'var(--text-on-primary-faint)', fontWeight: 500 }}>
+                ({formatBaseQty(cm.base_per_unit, line.unit)})
+              </span>
+            )}
+          </span>
+        </div>
+      )}
+      {unitMissing && (
+        <div>
+          <span style={{ ...labelStyle, color: 'var(--warning-text)' }}>
+            Seleciona unidade
+          </span>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {(['g', 'mL', 'un'] as const).map(u => (
+              <button
+                key={u}
+                type="button"
+                onClick={() => {
+                  onChange(line.id, 'unit', u)
+                  if (unitMissing) onResolved?.(line.id)
+                }}
+                style={{
+                  flex:         1,
+                  height:       44,
+                  borderRadius: 6,
+                  border:       `1px solid var(--action-border)`,
+                  background:   'var(--action-surface)',
+                  color:        'var(--action)',
+                  fontSize:     11,
+                  fontWeight:   700,
+                  cursor:       'pointer',
+                  fontFamily:   'JetBrains Mono, monospace',
+                }}
+              >
+                {u}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Hint do parser — qty + multipack detetados (continua útil para
+          dar contexto sobre o que o parser leu da linha) */}
       <SeedHint line={line} />
 
       {/* Fila 2: Categoria + Eliminar */}

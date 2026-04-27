@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import type { Article, Supplier } from '@/types/database'
+import type { Article, ArticleSize, Supplier } from '@/types/database'
 import {
   createArticle, updateArticle, toggleArticleActive,
   fetchAllSuppliers, fetchArticleSuppliers, saveArticleSuppliers,
   createArticleSizeIfMissing,
 } from '@/lib/supabase'
+import { fetchArticleSizes } from '@/lib/articles'
 import {
   ORDER_UNITS, formatStockQty, formatBaseQty,
   parsePackagingQuantity, packagingHelperText,
@@ -14,7 +15,7 @@ import {
 import { ARTICLE_CATEGORIES } from '@/lib/categoryKeywords'
 import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
 import { normalizeArticleInput } from '@/lib/normalizeArticle'
-import { buildArticleDraft, formatDraftHint, type ArticleDraft } from '@/lib/articleDraft'
+import { buildArticleDraft, formatDraftHint, getCountingModeOptions, inferIntent, type ArticleDraft, type ArticleIntent } from '@/lib/articleDraft'
 import { getSuggestedUnitWeight } from '@/lib/unitWeightSuggestions'
 import { useOrgAliases } from '@/hooks/useOrgAliases'
 
@@ -240,7 +241,18 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
 
   const [name,               setName]              = useState(existing?.name     ?? '')
   const [category,           setCategory]          = useState(existing?.category ?? '')
-  const [unit,               setUnit]              = useState<'g' | 'mL' | 'un'>((existing?.unit as 'g' | 'mL' | 'un') ?? 'g')
+  // Validar contra os 3 valores canónicos. Artigos legacy com unit='kg'/'L'
+  // partiam o form (parsePackagingQuantity → SUFFIX_RULES['kg']=undefined →
+  // crash em rules.wrong). Mapeamos para a base correspondente; o save em
+  // `unit.trim()` re-grava em forma canónica.
+  const initialUnit: 'g' | 'mL' | 'un' = (() => {
+    const u = (existing?.unit ?? '').toLowerCase()
+    if (u === 'kg' || u === 'g' || u === 'mg' || u === 'gr') return 'g'
+    if (u === 'l'  || u === 'ml' || u === 'cl' || u === 'dl') return 'mL'
+    if (u === 'un' || u === 'uni' || u === 'unidade')         return 'un'
+    return 'g'
+  })()
+  const [unit,               setUnit]              = useState<'g' | 'mL' | 'un'>(initialUnit)
   const [parLevel,           setParLevel]          = useState(existing ? String(existing.par_level) : '')
   const [parLevelDisplay,    setParLevelDisplay]   = useState('')
   const [gPerUnit,           setGPerUnit]          = useState(existing?.g_per_unit != null ? String(existing.g_per_unit) : '')
@@ -263,6 +275,11 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   // Erro de parse de "Peso médio por unidade". Mesmo padrão do convErrors:
   // setado no save se inválido (ex.: "1un", "500ml"), limpo on next change.
   const [gPerUnitError,      setGPerUnitError]      = useState<string | null>(null)
+  // article_sizes do artigo em edição. Fonte estável da unidade visual do
+  // par_level — sobrepõe-se ao fornecedor preferido (que era frágil: trocar
+  // fornecedor mudava silenciosamente o número visual). Em criação fica []
+  // até existir; após save, `createArticleSizeIfMissing` popula a tabela.
+  const [articleSizes,       setArticleSizes]       = useState<ArticleSize[]>([])
 
   const { aliases, learnAlias } = useOrgAliases()
   const rawNameRef              = useRef(existing?.name ?? '')
@@ -270,39 +287,47 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   const parsedSeedRef           = useRef<ArticleDraft | null>(null)
   const autoFillTimerRef        = useRef<ReturnType<typeof setTimeout> | null>(null)
   const unitManuallySet         = useRef(!!existing)
+  // R-FINAL: distinguir categoria preenchida pelo parser ("auto") de categoria
+  // tocada pelo chef ("manual"). Sem isto, depois do primeiro auto-fill o
+  // `category.trim() === ''` deixa de proteger e a categoria fica congelada
+  // mesmo quando o nome muda para algo cuja família é outra. Em edição
+  // assumimos manual (chef já confirmou no save anterior).
+  const categoryAutoFilledRef   = useRef(false)
 
-  // ── Stock Mínimo: fonte de unidade (preferred → qualquer link → seed → base) ──
-  // Usada para mostrar/inputar par level na unidade que o chef pensa (caixa, frasco)
-  // mantendo par_level guardado em base_unit.
+  // ── Stock Mínimo: fonte estável de unidade visual ─────────────────────────
+  // `getCountingModeOptions` é a single source of truth. Prioridade:
+  //   1. article_sizes (em edição) — fonte estável persistida
+  //   2. parsedHint.intent (em criação)
+  //   3. fallback baseado em `unit` via inferIntent
   //
-  // conversion_factor vive em linguagem humana ("10 kg", "5 L"). parseFloat
-  // disso devolve 10 / 5 — não 10000 / 5000. Usar parsePackagingQuantity
-  // para extrair o factor real em base_unit.
-  const linkFactor = (l: LinkRow): number => {
-    const r = parsePackagingQuantity(l.conversion_factor, unit)
-    return r.ok ? r.value : 0
-  }
-  const parPreferredLink = links.find(l =>
-    l.is_preferred && l.order_unit.trim() && linkFactor(l) > 0
-  )
-  const parFallbackLink = !parPreferredLink
-    ? links.find(l => l.order_unit.trim() && linkFactor(l) > 0)
-    : undefined
-  const parSeed = (!parPreferredLink && !parFallbackLink)
-    ? parsedHint?.supplierSeed
-    : undefined
-  const parSeedHasFactor = !!parSeed?.order_unit && parSeed.conversion_factor != null
-  const parMinUnit = parPreferredLink?.order_unit
-    ?? parFallbackLink?.order_unit
-    ?? (parSeedHasFactor ? parSeed!.order_unit : null)
-  const parMinFactor = parPreferredLink
-    ? linkFactor(parPreferredLink)
-    : parFallbackLink
-    ? linkFactor(parFallbackLink)
-    : parSeedHasFactor
-    ? parSeed!.conversion_factor!
-    : 1
-  const parUseOrderUnit = !!parMinUnit && parMinFactor > 0
+  // Não usamos `parPreferredLink`/`parFallbackLink`: trocar fornecedor não pode
+  // mudar a unidade visual do par (R1–R4 do design doc 2026-04-27-article-intent).
+  //
+  // Multipack: quando o input traz "1L pack 6uni" (ou "pack 6x1L"), oferece-se
+  // ao chef a escolha entre contar em pack ou em unidade individual. Default
+  // é a primeira opção (= pack, porque foi o que o chef escreveu explicitamente).
+  const intentForCounting = parsedHint?.intent ?? inferIntent({ unit, supplierSeed: undefined })
+  const countingOptions = getCountingModeOptions({
+    intent:       intentForCounting,
+    articleSizes: articleSizes.map(s => ({ label: s.label, base_per_unit: s.base_per_unit })),
+  })
+  const [selectedCountingIdx, setSelectedCountingIdx] = useState(0)
+  const safeIdx      = Math.min(selectedCountingIdx, countingOptions.length - 1)
+  const countingMode = countingOptions[safeIdx]
+  const parDisplay   = { unit: countingMode.count_unit, factor: countingMode.base_per_unit }
+  const parUseFactor = parDisplay.factor > 1 || parDisplay.unit !== unit
+
+  // Chave estável da intent — muda só quando o nome muda o tipo de packaging,
+  // não quando o chef alterna entre opções de multipack. Usada para R-A.
+  const intentKey = (() => {
+    const i = intentForCounting
+    if (i.kind === 'PACKAGED_WEIGHT' || i.kind === 'PACKAGED_VOLUME') {
+      const m = i.multipack ? `|${i.multipack.count}x${i.multipack.perPack}` : ''
+      return `${i.kind}|${i.orderUnit}|${i.basePerOrder}${m}`
+    }
+    if (i.kind === 'COUNTABLE_PACKAGED') return `${i.kind}|${i.orderUnit}|${i.perPack}`
+    return i.kind
+  })()
 
   // Esconder bloco "Mede em" quando o parser detetou unidade base explícita
   // (weight/volume/unit com qty). Em edição mantém visível porque o artigo
@@ -328,6 +353,18 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
     return raw
   }
 
+  // Helper interno usado por R-A: converte uma intent em chave estável.
+  // Ignora multipack innerLabel — só interessa packaging/family changes,
+  // não a alternativa visual do toggle.
+  const computeIntentKey = (i: ArticleIntent): string => {
+    if (i.kind === 'PACKAGED_WEIGHT' || i.kind === 'PACKAGED_VOLUME') {
+      const m = i.multipack ? `|${i.multipack.count}x${i.multipack.perPack}` : ''
+      return `${i.kind}|${i.orderUnit}|${i.basePerOrder}${m}`
+    }
+    if (i.kind === 'COUNTABLE_PACKAGED') return `${i.kind}|${i.orderUnit}|${i.perPack}`
+    return i.kind
+  }
+
   const handleNameBlur = () => {
     if (!name.trim()) return
 
@@ -339,10 +376,32 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
     // Bloco de normalização correu — reset do flag de edição manual
     nameChangedAfterBlurRef.current = false
 
-    // Preencher campos vazios (nunca sobrescrever escolhas conscientes)
+    // Preencher campos vazios (nunca sobrescrever escolhas conscientes).
+    // categoryAutoFilledRef vira true para que futuras edições de nome possam
+    // refrescar a categoria — desde que o chef não tenha tocado entretanto
+    // (o handler do CategoryField volta a pôr false).
     if (!isEdit) {
-      if (category.trim() === '' && normalized.category) setCategory(normalized.category)
+      if (category.trim() === '' && normalized.category) {
+        setCategory(normalized.category)
+        categoryAutoFilledRef.current = true
+      }
       if (!unitManuallySet.current) setUnit(normalized.unit)
+    }
+
+    // R-A (commit-only): comparar intent ANTES vs DEPOIS do blur. Se o chef
+    // mudou packaging significativa (kind/orderUnit/factor/multipack count),
+    // resetar par_level para evitar conversões silenciosas (5kg → 5000un).
+    // Vive aqui em vez de useEffect para não disparar a cada keystroke
+    // intermédio durante typing.
+    if (!isEdit) {
+      const draft       = buildArticleDraft(normalized.name, aliases)
+      const newIntentKey = computeIntentKey(draft.intent)
+      if (lastIntentKeyRef.current !== newIntentKey) {
+        lastIntentKeyRef.current = newIntentKey
+        setSelectedCountingIdx(0)
+        setParLevel('')
+        setParLevelDisplay('')
+      }
     }
 
     // Deteção de duplicados (só para artigos novos)
@@ -369,30 +428,45 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           // DB guarda em base_unit (10000 para 10kg). Display em "linguagem
           // de cozinha" via formatBaseQty: 10000 → "10 kg", 5000 → "5 L",
           // 180 → "180 un". parsePackagingQuantity faz round-trip seguro.
-          conversion_factor: formatBaseQty(r.conversion_factor, (existing.unit ?? 'g') as 'g' | 'mL' | 'un'),
+          conversion_factor: formatBaseQty(r.conversion_factor, initialUnit),
           is_preferred:      r.is_preferred,
         }))))
         .catch(() => {})
+
+      // article_sizes: fonte estável da unidade visual do par_level.
+      // Falha silenciosa — fallback para intent/base unit se não houver.
+      fetchArticleSizes(existing.id)
+        .then(setArticleSizes)
+        .catch(() => {})
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existing])
 
-  // Sincronizar display do Stock Mínimo quando a fonte de unidade muda
-  // (e.g., adiciona/remove fornecedor, muda preferred ou conversion_factor).
-  // Não inclui parLevel nas deps — durante digitação, o display é controlado
-  // pelo onChange e re-derivar partiria valores intermédios como "1.".
+  // Sync uma única vez do display do par_level quando articleSizes chegam.
+  // Razão: em edição, parLevel está em base_unit (5000 para 5kg) mas o
+  // visual deve mostrar "5" + sufixo "caixa"/"kg" conforme a fonte estável
+  // (size).
+  // Durante typing, o onChange controla parLevelDisplay directamente — não
+  // re-derivamos a cada mudança de factor para não partir valores
+  // intermédios como "1.".
+  const sizesAppliedRef = useRef(false)
   useEffect(() => {
+    if (!isEdit || sizesAppliedRef.current) return
+    if (articleSizes.length === 0 && parDisplay.factor === 1) return
     const base = parseFloat(parLevel) || 0
-    if (base <= 0) {
-      setParLevelDisplay('')
-      return
+    if (base > 0 && parDisplay.factor > 0) {
+      setParLevelDisplay(String(+(base / parDisplay.factor).toFixed(2)))
     }
-    setParLevelDisplay(
-      parUseOrderUnit
-        ? String(+(base / parMinFactor).toFixed(2))
-        : parLevel
-    )
+    sizesAppliedRef.current = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [parUseOrderUnit, parMinFactor])
+  }, [articleSizes, isEdit])
+
+  // R-A: ref guardada para o reset commit-only em handleNameBlur. Init com
+  // o intentKey corrente (artigo em edição já tem packaging fixa; criação
+  // começa em COUNTABLE_UNIT). O reset propriamente vive em handleNameBlur
+  // — não em useEffect — para não disparar a cada keystroke intermédio
+  // durante typing (o intent transita por estados parciais).
+  const lastIntentKeyRef = useRef(intentKey)
 
   const updateLink = (key: string, partial: Partial<LinkRow>) =>
     setLinks(prev => prev.map(l => l.key === key ? { ...l, ...partial } : l))
@@ -500,22 +574,34 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
         is_preferred:      validLinks.length === 1 ? true : l.is_preferred,
       })))
 
-      // Criação manual: se o parser detetou supplierSeed e não foi guardado
-      // nenhum fornecedor real, persistir a embalagem como article_size para
-      // o inventário ter unidade operacional. Idempotente; falha não bloqueia.
-      const seed = parsedSeedRef.current?.supplierSeed
+      // Criação manual: persistir a unidade de contagem que o chef tem
+      // ACTIVA na pill como article_size. Sem isto, escolher "unidade (1 L)"
+      // no toggle de "leite 1L pack 6uni" era silenciosamente convertido
+      // para "pack (6 L)" no save (o seed primário ganhava sempre). A
+      // article_size é a fonte estável: getCountingMode/Options dá-lhe
+      // prioridade absoluta no reload.
+      // Filtros mantêm a regra anterior: só aplica quando não há fornecedor
+      // real ainda registado, parser detetou packaging, e o label não é a
+      // base unit do artigo (kg/L/un genéricos não vão para article_sizes).
+      const seed         = parsedSeedRef.current?.supplierSeed
+      const persistMode  = countingMode  // = countingOptions[safeIdx]
+      const persistLabel = persistMode.count_unit
+      const persistFactor = persistMode.base_per_unit
       if (
         !isEdit &&
         validLinks.length === 0 &&
         seed?.order_unit &&
         seed.conversion_factor != null &&
         seed.conversion_factor > 0 &&
-        seed.order_unit !== input.unit
+        persistFactor > 0 &&
+        persistLabel !== input.unit &&
+        persistLabel !== 'kg' &&
+        persistLabel !== 'L'
       ) {
         try {
-          await createArticleSizeIfMissing(saved.id, seed.order_unit, seed.conversion_factor)
+          await createArticleSizeIfMissing(saved.id, persistLabel, persistFactor)
         } catch (e) {
-          console.error('createArticleSize falhou:', { articleId: saved.id, label: seed.order_unit, error: e })
+          console.error('createArticleSize falhou:', { articleId: saved.id, label: persistLabel, error: e })
         }
       }
 
@@ -690,19 +776,42 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
               rawNameRef.current = val
               nameChangedAfterBlurRef.current = true
               setIsDirty(true)
-              if (duplicateWarning) setDuplicateWarning(null)
+              // R-FINAL: classify uma vez por keystroke, alimentar todos os
+              // displays sem esperar pelo blur. Sync, sem DB, sem aprender
+              // aliases (maybeLearnAlias só corre em handleSave).
+              const draft   = buildArticleDraft(val, aliases)
+              const trimmed = val.trim()
               // Inferência de unidade base em tempo real
               if (!isEdit && !unitManuallySet.current) {
-                setUnit(normalizeArticleInput(val, aliases).unit)
+                setUnit(draft.unit)
+              }
+              // Categoria live: só sobrescreve se foi auto-preenchida ou se
+              // está vazia. Se o chef tocou no CategoryField manualmente,
+              // categoryAutoFilledRef vira false e este bloco não toca.
+              if (!isEdit && (categoryAutoFilledRef.current || category.trim() === '')) {
+                if (draft.category) {
+                  setCategory(draft.category)
+                  categoryAutoFilledRef.current = true
+                } else if (categoryAutoFilledRef.current) {
+                  setCategory('')
+                }
               }
               // Hint de parsing em tempo real + seed para auto-fill do fornecedor
-              const draft = buildArticleDraft(val, aliases)
               const hasExtracted =
                 draft.detected_qty != null ||
                 draft.detected_label != null ||
                 draft.supplierSeed != null
               setParsedHint(hasExtracted ? draft : null)
               parsedSeedRef.current = hasExtracted ? draft : null
+              // Duplicate warning live: recompute em vez de só limpar.
+              // Sem isto, a string desaparece em onChange e só volta no
+              // blur — chef pode digitar duplicado por inteiro sem aviso.
+              if (!isEdit && articles && trimmed !== '') {
+                const dup = articles.find(a => normalizeKey(a.name) === draft.normalizedKey)
+                setDuplicateWarning(dup ? `Artigo semelhante já existe: "${dup.name}"` : null)
+              } else if (duplicateWarning) {
+                setDuplicateWarning(null)
+              }
             }}
             onBlur={handleNameBlur}
             onKeyDown={e => { if (e.key === 'Enter' && name.trim()) handleSave() }}
@@ -742,63 +851,102 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             e o chef apenas confirma com um tap. */}
         <CategoryField
           value={category}
-          onChange={(v) => { setCategory(v); setIsDirty(true) }}
+          onChange={(v) => {
+            setCategory(v)
+            setIsDirty(true)
+            // Chef tocou: deixa de ser "auto" — futuras alterações de nome
+            // não podem sobrescrever esta escolha.
+            categoryAutoFilledRef.current = false
+          }}
         />
 
-        {/* UNIDADE — sozinha na sua row. PESO MÉDIO desce para a row
-            seguinte com a Sugestão Zesto inline ao lado. Vantagem dupla:
-            (1) input do peso ganha largura confortável; (2) sugestão fica
-            fisicamente adjacente ao alvo onde será injectada — proximidade
-            espacial = relação causal directa, o tap "puxa" o valor para o
-            input ao lado. hideUnitBlock continua a esconder em criação
-            quando o parser detectou peso/volume explícito. */}
-        {!hideUnitBlock && (
-          <>
+        {/* CONTA EM — pill(s) derivadas de getCountingModeOptions. Substitui
+            os chips g|mL|un que expunham unidade base ao chef. Quando há mais
+            do que uma opção (multipack: pack vs unidade individual), aparecem
+            chips selecionáveis em vez de pill passiva. Toggle preserva
+            par_level em base_unit (recalcula só o display). */}
+        {(existing || parsedHint || articleSizes.length > 0) && (
           <div>
-            <label style={labelStyle}>UNIDADE</label>
-            <div style={{
-              display:      'inline-flex',
-              padding:      4,
-              borderRadius: 12,
-              background:   'var(--surface)',
-              border:       '1px solid var(--border)',
-              gap:          2,
-            }}>
-              {(['g', 'mL', 'un'] as const).map((u) => {
-                const isSelected = unit === u
+            <label style={labelStyle}>CONTA EM</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {countingOptions.map((opt, idx) => {
+                const isSelected = idx === safeIdx
+                const isToggle   = countingOptions.length > 1
+                const detail     =
+                  opt.base_per_unit !== 1
+                  && opt.count_unit !== 'kg'
+                  && opt.count_unit !== 'L'
+                  && opt.count_unit !== 'un'
+                    ? `(${formatBaseQty(opt.base_per_unit, unit)})`
+                    : null
+                const onSelect = () => {
+                  if (!isToggle || isSelected) return
+                  setSelectedCountingIdx(idx)
+                  setIsDirty(true)
+                  // Preservar parLevel em base; recalcular só o display.
+                  // Sem reset: trocar de pill é refinamento da forma de contar,
+                  // não mudança de intent (R-A só dispara em mudança de nome).
+                  const base = parseFloat(parLevel) || 0
+                  if (base > 0 && opt.base_per_unit > 0) {
+                    setParLevelDisplay(String(+(base / opt.base_per_unit).toFixed(2)))
+                  } else {
+                    setParLevelDisplay('')
+                  }
+                }
+                // Quando há só 1 opção, a pill é informativa (não há nada
+                // para selecionar). Styling neutro: sem cor de action, sem
+                // estado pressed. Cor de action fica reservada para "esta
+                // é a tua escolha activa" no toggle.
+                const showActive = isToggle && isSelected
                 return (
                   <button
-                    key={u}
+                    key={`${opt.count_unit}-${idx}`}
                     type="button"
-                    onClick={() => {
-                      setUnit(u)
-                      unitManuallySet.current = true
-                      setIsDirty(true)
-                    }}
+                    onClick={isToggle ? onSelect : undefined}
+                    aria-pressed={isToggle ? isSelected : undefined}
+                    disabled={!isToggle}
                     style={{
-                      minWidth:      48,
-                      height:        40,
+                      display:       'inline-flex',
+                      alignItems:    'center',
+                      gap:           8,
                       padding:       '0 14px',
-                      border:        'none',
-                      borderRadius:  8,
-                      background:    isSelected ? 'var(--action)' : 'transparent',
-                      color:         isSelected ? 'var(--text-on-primary)' : 'var(--text-muted)',
-                      fontFamily:    "'JetBrains Mono', monospace",
-                      fontSize:      14,
-                      fontWeight:    isSelected ? 700 : 500,
-                      letterSpacing: '0.02em',
-                      cursor:        'pointer',
-                      transition:    'background 0.18s, color 0.18s, box-shadow 0.18s',
-                      boxShadow:     isSelected ? '0 2px 8px rgba(196, 106, 45, 0.3)' : 'none',
+                      height:        40,
+                      borderRadius:  10,
+                      cursor:        isToggle ? 'pointer' : 'default',
+                      transition:    'background 0.15s, border-color 0.15s, color 0.15s',
+                      background:    showActive ? 'var(--action)' : 'var(--surface-2)',
+                      border:        `1px solid ${showActive ? 'var(--action)' : 'var(--border)'}`,
+                      color:         showActive ? 'var(--text-on-primary)' : 'var(--text)',
+                      fontFamily:    'inherit',
                     }}
                   >
-                    {u}
+                    <span style={{
+                      fontFamily:    "'JetBrains Mono', monospace",
+                      fontSize:      14,
+                      fontWeight:    700,
+                      letterSpacing: '0.02em',
+                    }}>
+                      {opt.count_unit}
+                    </span>
+                    {detail && (
+                      <span style={{
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontSize:   12,
+                        color:      showActive ? 'var(--text-on-primary)' : 'var(--text-muted)',
+                        opacity:    showActive ? 0.85 : 1,
+                      }}>
+                        {detail}
+                      </span>
+                    )}
                   </button>
                 )
               })}
             </div>
           </div>
+        )}
 
+        {!hideUnitBlock && (
+          <>
           {/* PESO MÉDIO POR UNIDADE — input + sugestão Zesto inline */}
           {unit === 'un' && (() => {
             const parsedG    = parsePackagingQuantity(gPerUnit, 'g')
@@ -930,7 +1078,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                 if (v === '' || isNaN(num) || num < 0) {
                   setParLevel('')
                 } else {
-                  setParLevel(String(parUseOrderUnit ? num * parMinFactor : num))
+                  setParLevel(String(num * parDisplay.factor))
                 }
                 setIsDirty(true)
               }}
@@ -958,10 +1106,10 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
               flexShrink:    0,
               paddingLeft:   8,
             }}>
-              {parMinUnit ?? unit}
+              {parDisplay.unit}
             </span>
           </div>
-          {parUseOrderUnit && (parseFloat(parLevel) || 0) > 0 && (
+          {parUseFactor && (parseFloat(parLevel) || 0) > 0 && (
             <p style={{
               fontSize:   11,
               color:      'var(--text-subtle)',
