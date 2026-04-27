@@ -114,6 +114,34 @@ const CASES: Case[] = [
   { tag: 'CRITICAL', input: 'atum lombo 2kg',
     expect: { category: 'Peixe e Marisco' } },
 
+  // ── R-PATCH 2: "molho X" não é embalagem quando é prefixo do nome ────────
+  // Bug histórico: "molho" em CONTAINER_CONTEXT_WORDS era strippado pelo
+  // fallback de stripContainersAndBareNumbersList. "molho inglês" → "Inglês".
+  // Fix em normalizeArticle.ts: idx===0 com palavras a seguir é prefixo de
+  // nome. Casos com qty (garrafa/frasco) já funcionavam por outro path.
+  { tag: 'CRITICAL', input: 'molho inglês',
+    expect: { name: 'Molho Inglês', category: 'Mercearia' } },
+  { tag: 'CRITICAL', input: 'molho madeira',
+    expect: { name: 'Molho Madeira', category: 'Mercearia' } },
+  { tag: 'CRITICAL', input: 'molho barbecue',
+    expect: { name: 'Molho Barbecue', category: 'Mercearia' } },
+  { tag: 'CRITICAL', input: 'molho holandês',
+    expect: { name: 'Molho Holandês', category: 'Mercearia' } },
+  { tag: 'CRITICAL', input: 'molho soja garrafa 1l',
+    expect: { name: 'Molho Soja', category: 'Mercearia', orderUnit: 'garrafa', conversionFactor: 1000 } },
+  { tag: 'CRITICAL', input: 'molho ostra garrafa 700ml',
+    expect: { name: 'Molho Ostra', category: 'Mercearia', orderUnit: 'garrafa', conversionFactor: 700 } },
+  { tag: 'CRITICAL', input: 'molho peixe garrafa 725ml',
+    expect: { name: 'Molho Peixe', category: 'Mercearia', orderUnit: 'garrafa', conversionFactor: 725 } },
+  { tag: 'CRITICAL', input: 'molho hoisin frasco 397g',
+    expect: { name: 'Molho Hoisin', category: 'Mercearia', orderUnit: 'frasco', conversionFactor: 397 } },
+  // Não-regressão: "molho" noutra posição mantém path actual; nome pode
+  // perder "molho" mas NÃO pode perder "espargos verdes/brancos".
+  { tag: 'REGRESSION', input: 'espargos verdes molho',
+    expect: { name: 'Espargos Verdes' } },
+  { tag: 'REGRESSION', input: 'espargos brancos molho',
+    expect: { name: 'Espargos Brancos' } },
+
   // ── Multipack-equivalente: peso/volume + label + count solto ──────
   // Bug histórico: "6uni" colado e "pack 4" sem suffix ficavam fora do
   // ALT_MULTIPACK_COUNT_RE; multipack era ignorado e conversion_factor

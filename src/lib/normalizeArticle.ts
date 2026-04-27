@@ -231,12 +231,23 @@ export function extractName(line: string, cl: ClassifiedLine): string {
  */
 function stripContainersAndBareNumbersList(words: string[]): string[] {
   const isBareNumber = (w: string) => /^\d+[.,]?\d*$/.test(w)
-  const isContainer  = (w: string) => CONTAINER_CONTEXT_WORDS.includes(w.toLowerCase())
+  // R-PATCH 2: "molho"/"molhos" no idx 0 com palavras a seguir é prefixo de
+  // nome (ex: "molho inglês", "molho soja"), não embalagem. Sem este guard,
+  // o fallback abaixo strippava "molho" e o nome ficava só "Inglês"/"Soja".
+  // Em outras posições mantém-se o comportamento (pode ser unidade/bunch).
+  const isContainer = (w: string, idx: number, len: number) => {
+    const lower = w.toLowerCase()
+    if (!CONTAINER_CONTEXT_WORDS.includes(lower)) return false
+    if ((lower === 'molho' || lower === 'molhos') && idx === 0 && len > 1) {
+      return false
+    }
+    return true
+  }
 
   let removeStart = -1
   let removeEnd   = -1
   for (let i = 0; i < words.length; i++) {
-    if (!isContainer(words[i])) continue
+    if (!isContainer(words[i], i, words.length)) continue
     let j = i + 1
     while (j < words.length && NAME_CONNECTORS.has(words[j].toLowerCase())) j++
     if (j < words.length && isBareNumber(words[j])) {
@@ -250,7 +261,7 @@ function stripContainersAndBareNumbersList(words: string[]): string[] {
   if (removeStart >= 0) {
     cleaned = [...words.slice(0, removeStart), ...words.slice(removeEnd)]
   } else {
-    cleaned = words.filter(w => !isContainer(w))
+    cleaned = words.filter((w, i) => !isContainer(w, i, words.length))
   }
   return cleaned
     .filter(w => !UNIT_QTY_TOKENS.has(w.toLowerCase()))
@@ -263,6 +274,11 @@ function stripContainersAndBareNumbersList(words: string[]): string[] {
 // Mantido em sincronia com PACKAGING_LABELS (classifyLine) e PACKAGING_MAP
 // (articleDraft). Divergir aqui causa "container word não strippada do nome"
 // — ver caso "Manjericão vaso 1 uni" coberto em scripts/test-parser.ts.
+//
+// Excepção posicional: 'molho'/'molhos' no idx 0 com palavras a seguir é
+// tratado como prefixo de nome (R-PATCH 2). Ver isContainer em
+// stripContainersAndBareNumbersList. A lista permanece igual para que outras
+// posições continuem a tratar "molho" como container word.
 const CONTAINER_CONTEXT_WORDS = [
   'lata', 'latas', 'frasco', 'frascos', 'bisnaga',
   'conserva', 'conservas',

@@ -309,6 +309,13 @@ const PRIORITY_KEYWORDS: Array<{ phrase: string; category: string }> = [
   { phrase: 'coração de boi',        category: 'Frutas e Legumes' },
   { phrase: 'atum lombo',            category: 'Peixe e Marisco' },
   { phrase: 'lombo de atum',         category: 'Peixe e Marisco' },
+  // R-PATCH 2: 'madeira' é Bebidas keyword (vinho da Madeira); 'ostra'/'peixe'
+  // são Peixe e Marisco. Para os compostos "Molho X" o produto vive
+  // operacionalmente na despensa (Mercearia), não na categoria do ingrediente
+  // base. Sem estas entradas o loop INGREDIENT_KEYWORDS capturava o nome.
+  { phrase: 'molho madeira',         category: 'Mercearia' },
+  { phrase: 'molho ostra',           category: 'Mercearia' },
+  { phrase: 'molho peixe',           category: 'Mercearia' },
 ]
 
 // ── suggestCategory ───────────────────────────────────────────────────────────
