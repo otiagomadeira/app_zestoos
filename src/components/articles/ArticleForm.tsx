@@ -15,6 +15,7 @@ import { ARTICLE_CATEGORIES } from '@/lib/categoryKeywords'
 import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
 import { normalizeArticleInput } from '@/lib/normalizeArticle'
 import { buildArticleDraft, formatDraftHint, type ArticleDraft } from '@/lib/articleDraft'
+import { getSuggestedUnitWeight } from '@/lib/unitWeightSuggestions'
 import { useOrgAliases } from '@/hooks/useOrgAliases'
 
 interface Props {
@@ -35,22 +36,12 @@ type LinkRow = {
 }
 
 
-// Sugestões de g_per_unit para artigos contáveis comuns (chaves em normalizeKey format)
-const G_PER_UNIT_HINTS: Record<string, number> = {
-  'ovo': 52, 'ovos': 52, 'ovos frescos': 52,
-  'clara': 30, 'claras': 30,
-  'gema': 18, 'gemas': 18,
-  'ovo de codorniz': 10, 'ovos de codorniz': 10,
-  'limao': 90, 'limao amarelo': 90,
-  'lima': 60,
-  'laranja': 130,
-  'banana': 120,
-  'kiwi': 80,
-  'maca': 150,
-  'pera': 160,
-  'pessego': 150,
-  'nectarina': 140,
-}
+// Sugestões de g_per_unit vivem em src/lib/unitWeightSuggestions.ts (helper
+// puro, conhecimento global). Antes existia G_PER_UNIT_HINTS local com
+// auto-fill silencioso em handleNameBlur e Unit-click — removido. Agora
+// qualquer sugestão exige tap explícito do chef ("Usar sugestão"), seguindo
+// o mesmo princípio do conversion_factor: dados nunca são gravados sem
+// confirmação consciente.
 
 let _key = 0
 const nextKey = () => String(++_key)
@@ -60,7 +51,10 @@ const emptyLink = (): LinkRow => ({
   supplier_ref:      '',
   price:             '',
   order_unit:        '',
-  conversion_factor: '1',
+  // Vazio é intencional. Default silencioso de 1 cria dados errados em
+  // artigos g/mL ("mel: 1g por embalagem"). Chef escreve "10kg" / "5L" /
+  // "180un" antes de guardar; vazio → erro inline + bloqueio em handleSave.
+  conversion_factor: '',
   is_preferred:      false,
 })
 
@@ -74,12 +68,105 @@ const labelStyle: React.CSSProperties = {
   textTransform: 'uppercase',
 }
 
+// Info pip — micro-icon "i" ao lado de um label que revela explicação curta.
+// Existe para tirar texto de helper persistente do form sem perder a
+// informação: o helper passa de ruído permanente para detalhe sob demanda.
+// Acessível via teclado (focus + click) e mobile (tap fora fecha).
+function HelpTip({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointer)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('pointerdown', onPointer)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <span ref={ref} style={{ position: 'relative', display: 'inline-flex', verticalAlign: 'middle' }}>
+      <button
+        type="button"
+        aria-label="Ajuda"
+        aria-expanded={open}
+        onClick={(e) => { e.preventDefault(); setOpen(o => !o) }}
+        style={{
+          width:          16,
+          height:         16,
+          borderRadius:   '50%',
+          border:         `1px solid ${open ? 'var(--action)' : 'var(--text-subtle)'}`,
+          background:     open ? 'var(--action-surface)' : 'transparent',
+          color:          open ? 'var(--action)' : 'var(--text-subtle)',
+          fontSize:       10,
+          fontWeight:     700,
+          fontFamily:     "'Playfair Display', serif",
+          fontStyle:      'italic',
+          cursor:         'pointer',
+          display:        'flex',
+          alignItems:     'center',
+          justifyContent: 'center',
+          padding:        0,
+          flexShrink:     0,
+          lineHeight:     1,
+          letterSpacing:  0,
+          transition:     'background 0.15s, border-color 0.15s, color 0.15s',
+        }}
+      >
+        i
+      </button>
+      {open && (
+        <div
+          role="tooltip"
+          style={{
+            position:      'absolute',
+            top:           'calc(100% + 6px)',
+            left:          -8,
+            minWidth:      220,
+            maxWidth:      300,
+            background:    'var(--surface-2)',
+            border:        '1px solid var(--border)',
+            borderRadius:  8,
+            padding:       '10px 12px',
+            fontSize:      12,
+            fontWeight:    400,
+            color:         'var(--text)',
+            lineHeight:    1.5,
+            letterSpacing: 0,
+            textTransform: 'none',
+            fontFamily:    'inherit',
+            zIndex:        60,
+            boxShadow:     '0 8px 22px rgba(28, 20, 10, 0.16)',
+          }}
+        >
+          {text}
+        </div>
+      )}
+    </span>
+  )
+}
+
 // Section title com under-mark: pequena linha cor --action de 32px abaixo do
 // texto. Marker tipográfico editorial em vez de border-bottom à largura toda
-// (que se sente administrativo). Usado para STOCK / FORNECEDORES.
-function SectionTitle({ children }: { children: React.ReactNode }) {
+// (que se sente administrativo). Usado para DETALHES / FORNECEDORES.
+//
+// `flush` desactiva margens próprias — necessário quando o SectionTitle é
+// usado como flex item directo (o flex gap do parent já provê espaçamento).
+// Sem flush, a 14px de marginBottom soma-se ao gap 14 do flex e duplica.
+function SectionTitle({ children, flush }: { children: React.ReactNode; flush?: boolean }) {
   return (
-    <div style={{ marginBottom: 14, marginTop: 4 }}>
+    <div style={{
+      marginBottom: flush ? 0 : 14,
+      marginTop:    flush ? 0 : 4,
+    }}>
       <h4 style={{
         fontSize:      11,
         fontWeight:    800,
@@ -92,11 +179,11 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
         {children}
       </h4>
       <span style={{
-        display:    'block',
-        width:      32,
-        height:     2,
-        background: 'var(--action)',
-        borderRadius: 2,
+        display:      'block',
+        width:         32,
+        height:        2,
+        background:    'var(--action)',
+        borderRadius:  2,
       }} />
     </div>
   )
@@ -133,13 +220,14 @@ const cellInput: React.CSSProperties = {
 // Estilo para inputs numéricos hero (Stock mínimo, Peso por unidade).
 // Mono font para os números ganharem o peso visual que merecem; o chef
 // procura este número em primeiro lugar quando consulta a ficha.
-// Width é definido pelo container (flex em row com unit chip ao lado).
+// Height 48 (reduzido de 56) — ainda confortável tap-target acima do
+// 44 obrigatório, com mais densidade vertical na ficha.
 const numericInputStyle: React.CSSProperties = {
   ...inputStyle,
   flex:          1,
   minWidth:      0,
-  height:        56,
-  fontSize:      22,
+  height:        48,
+  fontSize:      20,
   fontFamily:    "'JetBrains Mono', monospace",
   fontWeight:    600,
   letterSpacing: '-0.01em',
@@ -172,6 +260,9 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   // O input aceita linguagem de cozinha ("10kg", "2,5L") e parsePackagingQuantity
   // valida contra a unit do artigo. Erros NÃO bloqueiam digitação — só blur/save.
   const [convErrors,         setConvErrors]         = useState<Record<string, string>>({})
+  // Erro de parse de "Peso médio por unidade". Mesmo padrão do convErrors:
+  // setado no save se inválido (ex.: "1un", "500ml"), limpo on next change.
+  const [gPerUnitError,      setGPerUnitError]      = useState<string | null>(null)
 
   const { aliases, learnAlias } = useOrgAliases()
   const rawNameRef              = useRef(existing?.name ?? '')
@@ -183,11 +274,19 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   // ── Stock Mínimo: fonte de unidade (preferred → qualquer link → seed → base) ──
   // Usada para mostrar/inputar par level na unidade que o chef pensa (caixa, frasco)
   // mantendo par_level guardado em base_unit.
+  //
+  // conversion_factor vive em linguagem humana ("10 kg", "5 L"). parseFloat
+  // disso devolve 10 / 5 — não 10000 / 5000. Usar parsePackagingQuantity
+  // para extrair o factor real em base_unit.
+  const linkFactor = (l: LinkRow): number => {
+    const r = parsePackagingQuantity(l.conversion_factor, unit)
+    return r.ok ? r.value : 0
+  }
   const parPreferredLink = links.find(l =>
-    l.is_preferred && l.order_unit.trim() && parseFloat(l.conversion_factor) > 0
+    l.is_preferred && l.order_unit.trim() && linkFactor(l) > 0
   )
   const parFallbackLink = !parPreferredLink
-    ? links.find(l => l.order_unit.trim() && parseFloat(l.conversion_factor) > 0)
+    ? links.find(l => l.order_unit.trim() && linkFactor(l) > 0)
     : undefined
   const parSeed = (!parPreferredLink && !parFallbackLink)
     ? parsedHint?.supplierSeed
@@ -197,9 +296,9 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
     ?? parFallbackLink?.order_unit
     ?? (parSeedHasFactor ? parSeed!.order_unit : null)
   const parMinFactor = parPreferredLink
-    ? parseFloat(parPreferredLink.conversion_factor)
+    ? linkFactor(parPreferredLink)
     : parFallbackLink
-    ? parseFloat(parFallbackLink.conversion_factor)
+    ? linkFactor(parFallbackLink)
     : parSeedHasFactor
     ? parSeed!.conversion_factor!
     : 1
@@ -210,10 +309,6 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   // já está guardado e o chef pode querer ajustar.
   const hideUnitBlock = !isEdit && parsedHint?.detected_qty != null
 
-  const markAuto = (field: string) => setAutoFilled(prev => {
-    if (prev.has(field)) return prev
-    return new Set([...prev, field])
-  })
   const unmarkAuto = (field: string) => setAutoFilled(prev => {
     if (!prev.has(field)) return prev
     const next = new Set(prev)
@@ -255,16 +350,6 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
       const key = normalized.normalizedKey
       const dup = articles.find(a => normalizeKey(a.name) === key)
       setDuplicateWarning(dup ? `Artigo semelhante já existe: "${dup.name}"` : null)
-    }
-
-    // Auto-sugestão de g_per_unit para artigos contáveis
-    const effectiveUnit = unitManuallySet.current ? unit : normalized.unit
-    if (effectiveUnit === 'un' && !gPerUnit) {
-      const hint = G_PER_UNIT_HINTS[normalized.normalizedKey]
-      if (hint) {
-        setGPerUnit(String(hint))
-        markAuto('gPerUnit')
-      }
     }
   }
 
@@ -334,44 +419,66 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
       l.supplier_id && parseFloat(l.price) > 0 && l.order_unit.trim()
     )
 
-    // Validar "Cada embalagem traz" para cada link válido. Vazio ou exactamente
-    // "1" é OK (cai para 1 base_unit por embalagem — semântica preservada).
-    // Qualquer outra coisa tem que parsar contra a unit do artigo.
-    const parsedFactors: Record<string, number> = {}
+    // Validar "Cada embalagem traz" para cada link válido. Vazio bloqueia
+    // (não há default — silenciar 1 cria stocks errados em g/mL). Recolhe
+    // TODOS os erros antes de bloquear para o chef ver tudo de uma vez.
+    // "1" sem sufixo continua válido (= 1 base_unit, dose individual).
+    const parsedFactors: Record<string, number>  = {}
+    const newConvErrors: Record<string, string>  = {}
     for (const link of validLinks) {
       const raw = link.conversion_factor.trim()
-      if (raw === '' || raw === '1') {
-        parsedFactors[link.key] = 1
+      if (raw === '') {
+        newConvErrors[link.key] = 'Indica quanto traz cada embalagem.'
         continue
       }
       const parsed = parsePackagingQuantity(raw, unit)
       if (!parsed.ok) {
-        const supplierName = suppliers.find(s => s.id === link.supplier_id)?.name ?? 'desconhecido'
-        const reason = parsed.reason === 'INCOMPATIBLE_UNIT'
-          ? 'esta quantidade não combina com a unidade do artigo'
-          : 'formato inválido'
-        setConvErrors(prev => ({
-          ...prev,
-          [link.key]: parsed.reason === 'INCOMPATIBLE_UNIT'
-            ? 'Esta quantidade não combina com a unidade do artigo.'
-            : 'Formato inválido. ' + packagingHelperText(unit) + '.',
-        }))
-        return setError(`Embalagem do fornecedor "${supplierName}": ${reason}.`)
+        newConvErrors[link.key] = parsed.reason === 'INCOMPATIBLE_UNIT'
+          ? 'Esta quantidade não combina com a unidade do artigo.'
+          : 'Formato inválido. ' + packagingHelperText(unit) + '.'
+        continue
       }
       parsedFactors[link.key] = parsed.value
+    }
+
+    if (Object.keys(newConvErrors).length > 0) {
+      setConvErrors(prev => ({ ...prev, ...newConvErrors }))
+      const errKeys = Object.keys(newConvErrors)
+      if (errKeys.length === 1) {
+        const k = errKeys[0]
+        const lk = validLinks.find(l => l.key === k)!
+        const supplierName = suppliers.find(s => s.id === lk.supplier_id)?.name ?? 'desconhecido'
+        return setError(`Fornecedor "${supplierName}": ${newConvErrors[k]}`)
+      }
+      return setError('Verifica os fornecedores: campos com erro.')
+    }
+
+    // Validar "Peso médio por unidade" — input livre que aceita "180", "180g",
+    // "0,18kg". Reusa parsePackagingQuantity com 'g' como articleUnit, o que
+    // automaticamente rejeita "1un" e "500ml" como INCOMPATIBLE_UNIT.
+    let gPerValue: number | null = null
+    if (unit === 'un') {
+      const rawG = gPerUnit.trim()
+      if (rawG !== '') {
+        const parsedG = parsePackagingQuantity(rawG, 'g')
+        if (!parsedG.ok) {
+          setGPerUnitError('Indica um peso válido por unidade.')
+          return setError('Peso médio por unidade: indica um peso válido (ex: 180g).')
+        }
+        gPerValue = parsedG.value
+      }
     }
 
     setSaving(true)
     setError(null)
     try {
       const normalized = normalizeArticleInput(name.trim(), aliases)
-      const gPer = parseFloat(gPerUnit)
       const input = {
         name:       normalized.name,
         unit:       unit.trim(),
         par_level:  par,
         category:   category.trim() || undefined,
-        g_per_unit: unit === 'un' && !isNaN(gPer) && gPer > 0 ? gPer : null,
+        g_per_unit: gPerValue,
       }
 
       let saved: Article
@@ -387,7 +494,9 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
         supplier_ref:      l.supplier_ref.trim() || null,
         price:             parseFloat(l.price),
         order_unit:        l.order_unit.trim(),
-        conversion_factor: parsedFactors[l.key] ?? 1,
+        // parsedFactors[l.key] está sempre populado: a validação acima
+        // bloqueia o save em qualquer link válido sem factor parsado.
+        conversion_factor: parsedFactors[l.key],
         is_preferred:      validLinks.length === 1 ? true : l.is_preferred,
       })))
 
@@ -456,7 +565,8 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
       <style>{`
         .zesto-form-input:focus,
         .zesto-form-cell:focus,
-        .zesto-form-num:focus {
+        .zesto-form-num:focus,
+        .zesto-form-input-wrap:focus-within {
           border-color: var(--action);
           box-shadow: 0 0 0 4px var(--action-glow);
         }
@@ -490,14 +600,16 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
         }
       `}</style>
 
-      {/* Header — eyebrow sozinho ("EDITAR · ARTIGO" / "NOVO · ARTIGO").
-          O nome vive no campo NOME do body, sem duplicação no header. */}
+      {/* Header editorial — título Playfair Display 22px com ponto separador.
+          Promovido de eyebrow tracked (10px) para título a sério, alinhado
+          com o peso visual de "Artigos · 124" da lista. O nome do artigo
+          continua a viver só no campo NOME do body, sem duplicação. */}
       <div style={{
         flexShrink: 0,
-        padding:    '20px 28px 18px',
+        padding:    '18px 28px 14px',
         display:    'flex',
         alignItems: 'center',
-        gap:        16,
+        gap:        14,
       }}>
         <button
           type="button"
@@ -523,16 +635,19 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
         >
           ←
         </button>
-        <p style={{
-          fontSize:      10,
+        <h1 style={{
+          fontFamily:    "'Playfair Display', serif",
+          fontSize:      22,
+          fontWeight:    500,
           color:         'var(--action)',
-          letterSpacing: '0.24em',
-          fontWeight:    700,
+          letterSpacing: '-0.01em',
           margin:        0,
-          textTransform: 'uppercase',
+          lineHeight:    1.2,
         }}>
-          {isEdit ? 'Editar' : 'Novo'} <span style={{ color: 'var(--text-subtle)', margin: '0 4px' }}>·</span> Artigo
-        </p>
+          {isEdit ? 'Editar' : 'Novo'}
+          <span style={{ color: 'var(--text-subtle)', margin: '0 8px', fontWeight: 400 }}>·</span>
+          Artigo
+        </h1>
       </div>
 
       {/* Hairline separator */}
@@ -543,15 +658,23 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
         margin:     '0 28px',
       }} />
 
-      {/* Body — gap generoso, padding lateral 28px para alinhar com header */}
+      {/* Body — gap 14 + top padding 18 para máxima densidade sem
+          perder respiração. Padding lateral 28px alinha com header. */}
       <div style={{
         flex:          1,
         overflowY:     'auto',
         display:       'flex',
         flexDirection: 'column',
-        gap:           24,
-        padding:       '24px 28px 12px',
+        gap:           14,
+        padding:       '18px 28px 12px',
       }}>
+
+        {/* Section: Detalhes — agrupa identidade (nome, categoria), unidade
+            (base + peso médio) e stock mínimo. Em par com FORNECEDORES (a
+            outra colecção mais abaixo) cria duas âncoras editoriais claras.
+            `flush` porque é flex item directo: o gap do parent (14) é o que
+            espaça do NOME que vem a seguir. */}
+        <SectionTitle flush>Detalhes</SectionTitle>
 
         {/* Name */}
         <div>
@@ -586,8 +709,8 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
             className="zesto-form-input"
             style={{
               ...inputStyle,
-              height:        56,
-              fontSize:      18,
+              height:        48,
+              fontSize:      17,
               fontFamily:    "'Playfair Display', serif",
               fontWeight:    500,
               letterSpacing: '-0.01em',
@@ -622,10 +745,15 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           onChange={(v) => { setCategory(v); setIsDirty(true) }}
         />
 
-        {/* Unidade — segmented sempre visível. hideUnitBlock continua a
-            esconder em criação se o parser já detetou peso/volume explícito,
-            evitando perguntar o que já é certo. */}
+        {/* UNIDADE — sozinha na sua row. PESO MÉDIO desce para a row
+            seguinte com a Sugestão Zesto inline ao lado. Vantagem dupla:
+            (1) input do peso ganha largura confortável; (2) sugestão fica
+            fisicamente adjacente ao alvo onde será injectada — proximidade
+            espacial = relação causal directa, o tap "puxa" o valor para o
+            input ao lado. hideUnitBlock continua a esconder em criação
+            quando o parser detectou peso/volume explícito. */}
         {!hideUnitBlock && (
+          <>
           <div>
             <label style={labelStyle}>UNIDADE</label>
             <div style={{
@@ -646,18 +774,11 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                       setUnit(u)
                       unitManuallySet.current = true
                       setIsDirty(true)
-                      if (u === 'un' && !gPerUnit && name.trim()) {
-                        const hint = G_PER_UNIT_HINTS[normalizeKey(name)]
-                        if (hint) {
-                          setGPerUnit(String(hint))
-                          markAuto('gPerUnit')
-                        }
-                      }
                     }}
                     style={{
-                      minWidth:      60,
+                      minWidth:      48,
                       height:        40,
-                      padding:       '0 18px',
+                      padding:       '0 14px',
                       border:        'none',
                       borderRadius:  8,
                       background:    isSelected ? 'var(--action)' : 'transparent',
@@ -677,129 +798,179 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
               })}
             </div>
           </div>
-        )}
 
-        {/* STOCK — agrupa parâmetros operacionais. Stock mínimo dispara
-            sugestão de encomenda; Peso por unidade só aparece quando o
-            artigo se conta à unidade (un) e é necessário para fichas
-            técnicas em gramas. */}
-        <div>
-          <SectionTitle>Stock</SectionTitle>
-          <div style={{
-            display:             'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-            gap:                 24,
-            alignItems:          'start',
-          }}>
-            {/* Stock mínimo — input na unidade do chef (caixa, frasco,
-                garrafão); par_level continua guardado em base_unit. Fonte
-                de unidade: link preferred → qualquer link válido → seed
-                do parser → base_unit. */}
-            <div>
-              <label style={labelStyle}>STOCK MÍNIMO</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  placeholder="0"
-                  value={parLevelDisplay}
-                  onChange={e => {
-                    const v = e.target.value
-                    setParLevelDisplay(v)
-                    const num = parseFloat(v)
-                    if (v === '' || isNaN(num) || num < 0) {
-                      setParLevel('')
-                    } else {
-                      setParLevel(String(parUseOrderUnit ? num * parMinFactor : num))
-                    }
-                    setIsDirty(true)
-                  }}
-                  className="zesto-form-num"
-                  style={numericInputStyle}
-                />
-                <span style={{
-                  fontSize:      13,
-                  fontWeight:    600,
-                  color:         'var(--text-muted)',
-                  fontFamily:    "'JetBrains Mono', monospace",
-                  letterSpacing: '0.04em',
-                  flexShrink:    0,
-                }}>
-                  {parMinUnit ?? unit}
-                </span>
-              </div>
-              {parUseOrderUnit && (parseFloat(parLevel) || 0) > 0 && (
-                <p style={{
-                  fontSize:   11,
-                  color:      'var(--text-subtle)',
-                  fontFamily: "'JetBrains Mono', monospace",
-                  marginTop:  6,
-                  margin:     '6px 0 0',
-                }}>
-                  ≈ {formatStockQty(parseFloat(parLevel), unit)}
-                </p>
-              )}
-              <p style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 8, lineHeight: 1.5 }}>
-                Quando o stock baixar deste valor, o Zesto sugere encomenda.
-              </p>
-            </div>
-
-            {/* Peso por unidade — só para unit==='un'. Necessário para
-                fichas técnicas em gramas (ex.: 150g de ovos). */}
-            {unit === 'un' && (() => {
-              const gNum       = parseFloat(gPerUnit)
-              const hasValue   = !isNaN(gNum) && gNum > 0
-              const outOfRange = hasValue && (gNum < 5 || gNum > 2000)
-              return (
-                <div>
-                  <label style={labelStyle}>PESO POR UNIDADE</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <input
-                      type="number"
-                      min="0.01"
-                      step="any"
-                      placeholder="0"
-                      value={gPerUnit}
-                      onChange={e => { setGPerUnit(e.target.value); unmarkAuto('gPerUnit'); setIsDirty(true) }}
-                      className="zesto-form-num"
-                      style={numericInputStyle}
-                    />
-                    <span style={{
-                      fontSize:      13,
-                      fontWeight:    600,
-                      color:         outOfRange ? 'var(--warning)' : 'var(--text-muted)',
-                      fontFamily:    "'JetBrains Mono', monospace",
-                      letterSpacing: '0.04em',
-                      flexShrink:    0,
-                    }}>
-                      g
-                    </span>
-                  </div>
-                  {hasValue && (
-                    <p style={{
-                      fontSize:   11,
-                      color:      outOfRange ? 'var(--warning)' : 'var(--text-subtle)',
-                      fontFamily: "'JetBrains Mono', monospace",
-                      margin:     '6px 0 0',
-                    }}>
-                      1 un ≈ {gNum} g
-                    </p>
-                  )}
-                  {outOfRange && (
-                    <p style={{ fontSize: 11, color: 'var(--warning)', marginTop: 8, marginBottom: 0, lineHeight: 1.5 }}>
-                      Valor fora do esperado (5–2000g) — confirma se correto.
-                    </p>
-                  )}
-                  {!gPerUnit && (
-                    <p style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 8, marginBottom: 0, lineHeight: 1.5 }}>
-                      Necessário para usar gramas nas fichas técnicas (ex: 150g ovos).
-                    </p>
+          {/* PESO MÉDIO POR UNIDADE — input + sugestão Zesto inline */}
+          {unit === 'un' && (() => {
+            const parsedG    = parsePackagingQuantity(gPerUnit, 'g')
+            const gNum       = parsedG.ok ? parsedG.value : null
+            const hasValue   = gNum != null && gNum > 0
+            const outOfRange = hasValue && (gNum < 5 || gNum > 2000)
+            const suggestion = !gPerUnit.trim() && name.trim().length >= 3
+              ? getSuggestedUnitWeight(name)
+              : null
+            return (
+              <div>
+                <div style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>PESO MÉDIO POR UNIDADE</span>
+                  <HelpTip text="Peso bruto do produto cru/inteiro, como chega à cozinha (com casca, pele ou caroço quando aplicável)." />
+                </div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'stretch', flexWrap: 'wrap' }}>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="ex: 180g"
+                    value={gPerUnit}
+                    onChange={e => {
+                      setGPerUnit(e.target.value)
+                      setIsDirty(true)
+                      if (gPerUnitError) setGPerUnitError(null)
+                    }}
+                    className="zesto-form-num"
+                    style={{ ...numericInputStyle, flex: '1 1 180px' }}
+                  />
+                  {suggestion != null && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGPerUnit(String(suggestion))
+                        setIsDirty(true)
+                      }}
+                      aria-label={`Usar sugestão Zesto: ${suggestion}g`}
+                      style={{
+                        flex:           '0 1 auto',
+                        minWidth:       0,
+                        height:         48,
+                        padding:        '0 14px',
+                        background:     'var(--action-surface)',
+                        border:         '1px solid var(--action-glow)',
+                        borderRadius:   8,
+                        cursor:         'pointer',
+                        fontFamily:     'inherit',
+                        fontSize:       13,
+                        color:          'var(--text-muted)',
+                        touchAction:    'manipulation',
+                        display:        'flex',
+                        alignItems:     'center',
+                        gap:            10,
+                        whiteSpace:     'nowrap',
+                        transition:     'background 0.15s, border-color 0.15s',
+                      }}
+                    >
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+                        ≈{' '}
+                        <span style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontWeight: 700,
+                          color:      'var(--action)',
+                        }}>
+                          {suggestion}g
+                        </span>
+                      </span>
+                      <span style={{
+                        color:         'var(--action)',
+                        fontWeight:    600,
+                        fontSize:      12,
+                        letterSpacing: '0.02em',
+                        flexShrink:    0,
+                      }}>
+                        Usar →
+                      </span>
+                    </button>
                   )}
                 </div>
-              )
-            })()}
+                {gPerUnitError && (
+                  <p style={{ fontSize: 11, color: 'var(--error)', margin: '6px 0 0', lineHeight: 1.4 }}>
+                    {gPerUnitError}
+                  </p>
+                )}
+                {!gPerUnitError && outOfRange && (
+                  <p style={{ fontSize: 11, color: 'var(--warning)', margin: '6px 0 0', lineHeight: 1.5 }}>
+                    Valor fora do esperado (5–2000g) — confirma se correto.
+                  </p>
+                )}
+              </div>
+            )
+          })()}
+          </>
+        )}
+
+        {/* STOCK MÍNIMO — único campo na zona de stock. SectionTitle
+            "Stock" eliminado: 1 campo não justifica section header. A
+            label "STOCK MÍNIMO" (uppercase + tracking) já actua como
+            organizador visual. SectionTitle FORNECEDORES mantém-se
+            porque é colecção real (várias linhas).
+            Input + sufixo "un" partilham a mesma caixa via wrapper com
+            focus-within: ler "5 un" como uma unidade visual em vez de
+            "5" + chip flutuante de unidade ao lado. Largura cheia para
+            consistência com os outros inputs (NOME, PESO MÉDIO). */}
+        <div>
+          <div style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span>STOCK MÍNIMO</span>
+            <HelpTip text="Abaixo deste valor, o Zesto sugere encomenda." />
           </div>
+          <div className="zesto-form-input-wrap" style={{
+            display:      'flex',
+            alignItems:   'center',
+            height:       48,
+            background:   'var(--surface)',
+            border:       '1px solid var(--border)',
+            borderRadius: 8,
+            padding:      '0 14px',
+            transition:   'border-color 0.15s, box-shadow 0.15s',
+          }}>
+            <input
+              type="text"
+              inputMode="decimal"
+              placeholder="0"
+              value={parLevelDisplay}
+              onChange={e => {
+                const v = e.target.value
+                setParLevelDisplay(v)
+                const num = parseFloat(v)
+                if (v === '' || isNaN(num) || num < 0) {
+                  setParLevel('')
+                } else {
+                  setParLevel(String(parUseOrderUnit ? num * parMinFactor : num))
+                }
+                setIsDirty(true)
+              }}
+              style={{
+                flex:          1,
+                minWidth:      0,
+                height:        '100%',
+                background:    'transparent',
+                border:        'none',
+                outline:       'none',
+                color:         'var(--text)',
+                fontFamily:    "'JetBrains Mono', monospace",
+                fontSize:      20,
+                fontWeight:    600,
+                letterSpacing: '-0.01em',
+                padding:       0,
+              }}
+            />
+            <span style={{
+              fontSize:      13,
+              fontWeight:    600,
+              color:         'var(--text-muted)',
+              fontFamily:    "'JetBrains Mono', monospace",
+              letterSpacing: '0.04em',
+              flexShrink:    0,
+              paddingLeft:   8,
+            }}>
+              {parMinUnit ?? unit}
+            </span>
+          </div>
+          {parUseOrderUnit && (parseFloat(parLevel) || 0) > 0 && (
+            <p style={{
+              fontSize:   11,
+              color:      'var(--text-subtle)',
+              fontFamily: "'JetBrains Mono', monospace",
+              margin:     '6px 0 0',
+            }}>
+              ≈ {formatStockQty(parseFloat(parLevel), unit)}
+            </p>
+          )}
         </div>
 
         {/* Supplier links */}
@@ -866,7 +1037,9 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                   <div style={{ flex: 1 }}>
                     <label style={{ fontSize: 10, color: 'var(--text-subtle)', display: 'block', marginBottom: 2 }}>PREÇO (€)</label>
                     <input
-                      type="number" min="0" step="any" placeholder="0.00"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0.00"
                       value={link.price}
                       onChange={e => { updateLink(link.key, { price: e.target.value }); setIsDirty(true) }}
                       className="zesto-form-cell" style={cellInput}
@@ -1138,9 +1311,14 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
 }
 
 // ── CategoryField ────────────────────────────────────────────────────────────
-// Chips em scroll horizontal + chip "+ outra" que reveala input para
-// categoria custom. Mantém pattern visual consistente com o filtro da
-// lista de Artigos e Inventário (chips redondos, scroll horizontal).
+// Estado colapsado por defeito: chip único com a categoria actual + texto
+// "→ outras" que abre popover com todas as opções. Razão: na maioria das
+// edições a categoria já está correcta; mostrar 8 chips em scroll horizontal
+// é ruído visual. Em criação, o parser preencheu uma sugestão; o chef
+// confirma com 0 toques ou tem 1 atalho para a mudar.
+//
+// Popover ancora ao chip e contém: lista vertical de categorias standard +
+// toggle "Personalizada" para input livre. Click outside / Escape fecha.
 
 function CategoryField({
   value,
@@ -1150,82 +1328,191 @@ function CategoryField({
   onChange: (next: string) => void
 }) {
   const isStandard = (ARTICLE_CATEGORIES as readonly string[]).includes(value)
-  const [showCustom, setShowCustom] = useState(!!value && !isStandard)
+  const isCustom   = !!value && !isStandard
+  const [open,        setOpen]        = useState(false)
+  const [showCustom,  setShowCustom]  = useState(isCustom)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointer)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('pointerdown', onPointer)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const display      = value || 'Escolher categoria'
+  const hasValue     = !!value
 
   return (
-    <div>
+    <div ref={ref} style={{ position: 'relative' }}>
       <label style={labelStyle}>CATEGORIA</label>
-      <div
-        role="tablist"
-        aria-label="Escolher categoria"
-        style={{
-          display:                 'flex',
-          gap:                     6,
-          overflowX:               'auto',
-          overflowY:               'hidden',
-          margin:                  '0 -28px',
-          padding:                 '0 28px 4px',
-          scrollbarWidth:          'none',
-          WebkitOverflowScrolling: 'touch',
-        }}
-      >
-        {ARTICLE_CATEGORIES.map(cat => {
-          const isSelected = value === cat
-          return (
-            <button
-              key={cat}
-              type="button"
-              role="tab"
-              aria-selected={isSelected}
-              onClick={() => { onChange(cat); setShowCustom(false) }}
-              style={{
-                flexShrink:   0,
-                minHeight:    'var(--touch-min)',
-                padding:      '0 16px',
-                borderRadius: 24,
-                border:       `1px solid ${isSelected ? 'var(--action)' : 'var(--border)'}`,
-                background:   isSelected ? 'var(--action)' : 'var(--surface)',
-                color:        isSelected ? 'var(--text-on-primary)' : 'var(--text-muted)',
-                fontSize:     13,
-                fontWeight:   isSelected ? 600 : 500,
-                letterSpacing: isSelected ? '0.01em' : 0,
-                whiteSpace:   'nowrap',
-                cursor:       'pointer',
-                touchAction:  'manipulation',
-                boxShadow:    isSelected ? '0 4px 12px rgba(196, 106, 45, 0.25)' : 'none',
-                transition:   'box-shadow 0.18s, background 0.15s',
-              }}
-            >
-              {cat}
-            </button>
-          )
-        })}
-        <button
-          type="button"
-          onClick={() => { setShowCustom(true); if (isStandard) onChange('') }}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        {/* Chip da categoria actual — display-only (NÃO interactivo). Estado
+            visual neutro (surface + texto), sem laranja. A acção de mudar
+            vive exclusivamente no botão "→ outras" ao lado para evitar dois
+            triggers visualmente indistintos a competir pelo mesmo input.
+            Por isso é <span>, não <button> — afirma "isto é informação,
+            não controlo". */}
+        <span
           style={{
-            flexShrink:   0,
-            minHeight:    'var(--touch-min)',
-            padding:      '0 16px',
-            borderRadius: 24,
-            border:       '1px dashed var(--border)',
-            background:   showCustom && !isStandard ? 'var(--action-surface)' : 'transparent',
-            color:        showCustom && !isStandard ? 'var(--action)' : 'var(--text-subtle)',
-            fontSize:     13,
-            fontWeight:   500,
-            whiteSpace:   'nowrap',
-            cursor:       'pointer',
-            touchAction:  'manipulation',
+            minHeight:     'var(--touch-min)',
+            display:       'inline-flex',
+            alignItems:    'center',
+            padding:       '0 16px',
+            borderRadius:  24,
+            border:        `1px solid var(--border)`,
+            background:    'var(--surface)',
+            color:         hasValue ? 'var(--text)' : 'var(--text-subtle)',
+            fontSize:      13,
+            fontWeight:    hasValue ? 600 : 500,
+            fontStyle:     hasValue ? 'normal' : 'italic',
+            whiteSpace:    'nowrap',
+            fontFamily:    'inherit',
           }}
         >
-          + outra
+          {display}
+        </span>
+
+        {/* Único trigger — abre o popover com todas as categorias. */}
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          style={{
+            background:    'transparent',
+            border:        'none',
+            padding:       '0 4px',
+            color:         'var(--action)',
+            fontSize:      12,
+            fontWeight:    600,
+            letterSpacing: '0.04em',
+            cursor:        'pointer',
+            touchAction:   'manipulation',
+            fontFamily:    'inherit',
+            minHeight:     32,
+          }}
+        >
+          → outras
         </button>
       </div>
+
+      {open && (
+        <div
+          role="listbox"
+          style={{
+            position:     'absolute',
+            top:          'calc(100% + 8px)',
+            left:         0,
+            right:        0,
+            background:   'var(--surface-2)',
+            border:       '1px solid var(--border)',
+            borderRadius: 12,
+            boxShadow:    '0 12px 32px rgba(28, 20, 10, 0.16)',
+            padding:      6,
+            zIndex:       100,
+            maxHeight:    340,
+            overflowY:    'auto',
+          }}
+        >
+          {ARTICLE_CATEGORIES.map(cat => {
+            const isSelected = value === cat
+            return (
+              <button
+                key={cat}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                onClick={() => {
+                  onChange(cat)
+                  setShowCustom(false)
+                  setOpen(false)
+                }}
+                className="zesto-option"
+                style={{
+                  width:         '100%',
+                  minHeight:     44,
+                  padding:       '10px 14px',
+                  textAlign:     'left',
+                  border:        'none',
+                  borderRadius:  8,
+                  background:    isSelected ? 'var(--action-surface)' : 'transparent',
+                  color:         isSelected ? 'var(--action)' : 'var(--text)',
+                  fontSize:      14,
+                  fontWeight:    isSelected ? 600 : 500,
+                  cursor:        'pointer',
+                  display:       'flex',
+                  alignItems:    'center',
+                  gap:           10,
+                  fontFamily:    'inherit',
+                  transition:    'background 0.12s',
+                }}
+              >
+                <span aria-hidden style={{
+                  width:      14,
+                  display:    'inline-block',
+                  textAlign:  'center',
+                  color:      isSelected ? 'var(--action)' : 'transparent',
+                  fontSize:   13,
+                  fontWeight: 700,
+                  flexShrink: 0,
+                }}>
+                  ✓
+                </span>
+                {cat}
+              </button>
+            )
+          })}
+
+          {/* Separator + toggle Personalizada */}
+          <div style={{
+            height:    1,
+            background: 'var(--border)',
+            margin:    '6px 12px',
+          }} />
+
+          <button
+            type="button"
+            onClick={() => {
+              setShowCustom(true)
+              setOpen(false)
+            }}
+            style={{
+              width:         '100%',
+              minHeight:     44,
+              padding:       '10px 14px',
+              textAlign:     'left',
+              border:        'none',
+              borderRadius:  8,
+              background:    showCustom ? 'var(--action-surface)' : 'transparent',
+              color:         showCustom ? 'var(--action)' : 'var(--text-muted)',
+              fontSize:      13,
+              fontWeight:    500,
+              cursor:        'pointer',
+              fontFamily:    'inherit',
+              fontStyle:     'italic',
+            }}
+            className="zesto-option"
+          >
+            + Personalizada…
+          </button>
+        </div>
+      )}
+
       {showCustom && (
         <input
           type="text"
           placeholder="Categoria personalizada…"
-          value={isStandard ? '' : value}
+          value={isCustom ? value : ''}
           onChange={e => onChange(e.target.value)}
           autoFocus
           className="zesto-form-input"

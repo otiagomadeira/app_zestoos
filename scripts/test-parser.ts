@@ -15,6 +15,7 @@
 import { buildArticleDraft, formatDraftHint } from '../src/lib/articleDraft'
 import { parseProductLines } from '../src/lib/parseProductLines'
 import { parsePackagingQuantity, type ArticleBaseUnit } from '../src/lib/units'
+import { getSuggestedUnitWeight } from '../src/lib/unitWeightSuggestions'
 
 type Expect = {
   name?:             string
@@ -308,6 +309,8 @@ const PKG_CASES: PkgCase[] = [
 
   // ── INVALID: lixo, vazio, zero, formato impossível ───────────────────
   { input: '',        unit: 'g',  expected: { ok: false, reason: 'INVALID' } },
+  { input: '',        unit: 'mL', expected: { ok: false, reason: 'INVALID' } },
+  { input: '',        unit: 'un', expected: { ok: false, reason: 'INVALID' } },
   { input: 'abc',     unit: 'g',  expected: { ok: false, reason: 'INVALID' } },
   { input: '0kg',     unit: 'g',  expected: { ok: false, reason: 'INVALID' } },
   { input: '-10kg',   unit: 'g',  expected: { ok: false, reason: 'INVALID' } },
@@ -338,6 +341,72 @@ for (const c of PKG_CASES) {
     console.log(`  ✗  [PKG] ${JSON.stringify(c.input)} (${c.unit})`)
     console.log(`        esperado ${want}, obteve ${got}`)
     failures.push(`PKG ${c.input} (${c.unit})`)
+  }
+}
+
+// ── getSuggestedUnitWeight (peso médio por unidade) ──────────────────────────
+//
+// Cobre matching seguro: exact match contra chave normalizada (lowercase +
+// accent-strip), token fallback apenas para whitelist explícita. Casos
+// críticos: "Lima" não bate em "Limão", "Batata Doce" → null (token 'batata'
+// fora da whitelist), "Ovo de Codorniz" → null (token 'ovo' fora).
+
+console.log('\n── getSuggestedUnitWeight ──')
+
+const SUG_CASES: Array<{ name: string; expected: number | null }> = [
+  // Exact match — base
+  { name: 'Maçã',             expected: 180 },
+  { name: 'Lima',             expected: 70  },
+  { name: 'Limão',            expected: 100 },
+  { name: 'Cebola Roxa',      expected: 180 },
+  { name: 'Batata',           expected: 200 },
+  { name: 'Tomate',           expected: 150 },
+  { name: 'Ovo',              expected: 52  },
+  { name: 'Alface Iceberg',   expected: 500 },
+  { name: 'Alface Romana',    expected: 350 },
+  // Token fallback (whitelist)
+  { name: 'Limão Siciliano',  expected: 100 },
+  { name: 'Cebola Doce',      expected: 180 },
+  // Token fallback bloqueado (não whitelist)
+  { name: 'Tomate Cherry',    expected: null },
+  { name: 'Ovo de Codorniz',  expected: null },
+  { name: 'Alface',           expected: null },
+  // Sem qualquer match
+  { name: '',                 expected: null },
+
+  // ── Base expandida ────────────────────────────────────────────────────
+  // Maçã (variedades)
+  { name: 'Maçã Royal Gala',  expected: 170 },
+  { name: 'Maçã Reineta',     expected: 220 },
+  // Pêra (com e sem acento; rocha + base)
+  { name: 'Pêra',             expected: 160 },
+  { name: 'Pêra Rocha',       expected: 140 },
+  { name: 'Pera Rocha',       expected: 140 },
+  { name: 'Pera',             expected: 160 },  // antes era null; agora exact
+  // Cogumelos (exact + null seguro)
+  { name: 'Cogumelo Portobello', expected: 80 },
+  { name: 'Cogumelo Laminado',   expected: null },
+  // Batata (variedades + doce passa a 300; palha → null)
+  { name: 'Batata Agria',     expected: 220 },
+  { name: 'Batata Doce',      expected: 300 },  // antes era null; agora exact
+  { name: 'Batata Palha',     expected: null },
+  // Pimentos (variedades, padrón com singular e plural)
+  { name: 'Pimento Vermelho', expected: 180 },
+  { name: 'Pimento Padrón',   expected: 12 },
+  { name: 'Pimentos Padrón',  expected: 12 },   // de-pluralize → "pimento padron"
+  { name: 'Malagueta',        expected: 8  },
+]
+
+for (const c of SUG_CASES) {
+  const got = getSuggestedUnitWeight(c.name)
+  if (got === c.expected) {
+    pass++
+    console.log(`  ✓  [SUG] ${JSON.stringify(c.name)} → ${got}`)
+  } else {
+    fail++
+    console.log(`  ✗  [SUG] ${JSON.stringify(c.name)}`)
+    console.log(`        esperado ${c.expected}, obteve ${got}`)
+    failures.push(`SUG ${c.name}`)
   }
 }
 

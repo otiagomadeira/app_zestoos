@@ -173,7 +173,7 @@ export function parsePackagingQuantity(
 export function packagingHelperText(unit: ArticleBaseUnit): string {
   if (unit === 'g')  return 'Ex: 10kg, 2,5kg, 500g, 3k'
   if (unit === 'mL') return 'Ex: 5L, 2,5L, 750ml'
-  return 'Ex: 6, 12, 180'
+  return 'Ex: 180un, 12, 6'
 }
 
 // Unidades de medida comuns em cozinha profissional
