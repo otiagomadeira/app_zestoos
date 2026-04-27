@@ -482,6 +482,12 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           box-shadow: 0 3px 10px rgba(196, 106, 45, 0.22),
                       0 1px 0 rgba(168, 88, 34, 0.6) inset;
         }
+        .zesto-option:hover {
+          background: var(--bg) !important;
+        }
+        .zesto-option[aria-selected="true"]:hover {
+          background: var(--action-surface) !important;
+        }
       `}</style>
 
       {/* Header — eyebrow sozinho ("EDITAR · ARTIGO" / "NOVO · ARTIGO").
@@ -833,14 +839,11 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
               >
                 {/* Row 1: supplier + star + delete */}
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <select
+                  <SupplierSelect
                     value={link.supplier_id}
-                    onChange={e => { updateLink(link.key, { supplier_id: e.target.value }); setIsDirty(true) }}
-                    style={{ flex: 1, height: 44, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', fontSize: 13, padding: '0 8px', outline: 'none', cursor: 'pointer' }}
-                  >
-                    <option value="">Selecionar fornecedor…</option>
-                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
+                    onChange={(id) => { updateLink(link.key, { supplier_id: id }); setIsDirty(true) }}
+                    suppliers={suppliers}
+                  />
                   <button
                     onClick={() => setPreferred(link.key)}
                     title="Fornecedor preferido"
@@ -885,22 +888,18 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                         }}>·auto</span>
                       )}
                     </label>
-                    <input
-                      list={`units-order-link-${link.key}`}
-                      placeholder="ex: caixa, saco…"
+                    <UnitCombo
                       value={link.order_unit}
-                      onChange={e => {
-                        updateLink(link.key, { order_unit: e.target.value })
+                      onChange={(v) => {
+                        updateLink(link.key, { order_unit: v })
                         unmarkAuto(`orderUnit_${link.key}`)
                         setIsDirty(true)
                         if (autoFillMsg?.key === link.key) setAutoFillMsg(null)
                       }}
-                      onBlur={e => updateLink(link.key, { order_unit: e.target.value.trim().toLowerCase() })}
-                      className="zesto-form-cell" style={cellInput}
+                      onBlur={() => updateLink(link.key, { order_unit: link.order_unit.trim().toLowerCase() })}
+                      options={ORDER_UNITS}
+                      placeholder="caixa, saco, frasco…"
                     />
-                    <datalist id={`units-order-link-${link.key}`}>
-                      {ORDER_UNITS.map(u => <option key={u} value={u} />)}
-                    </datalist>
                   </div>
                 </div>
 
@@ -1244,6 +1243,300 @@ function CategoryField({
             transition:   'border-color 0.15s, box-shadow 0.15s',
           }}
         />
+      )}
+    </div>
+  )
+}
+
+// ── SupplierSelect ───────────────────────────────────────────────────────────
+// Custom select para escolha de fornecedor. Substitui o <select> nativo que
+// usava UA styling do sistema (highlight azul, font do OS, dropdown genérico).
+// Pop-over editorial em --surface-2 com items 40px tall, hover suave e check
+// laranja no item activo.
+
+function SupplierSelect({
+  value,
+  onChange,
+  suppliers,
+  placeholder = 'Selecionar fornecedor…',
+}: {
+  value:        string
+  onChange:     (id: string) => void
+  suppliers:    Supplier[]
+  placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const selected = suppliers.find(s => s.id === value)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointer)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('pointerdown', onPointer)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div ref={ref} style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        style={{
+          width:          '100%',
+          height:         44,
+          padding:        '0 12px',
+          background:     'var(--surface)',
+          border:         `1px solid ${open ? 'var(--action)' : 'var(--border)'}`,
+          borderRadius:   8,
+          color:          selected ? 'var(--text)' : 'var(--text-subtle)',
+          fontSize:       14,
+          textAlign:      'left',
+          cursor:         'pointer',
+          display:        'flex',
+          alignItems:     'center',
+          justifyContent: 'space-between',
+          gap:            8,
+          fontFamily:     'inherit',
+          touchAction:    'manipulation',
+          boxShadow:      open ? '0 0 0 4px var(--action-glow)' : 'none',
+          transition:     'border-color 0.15s, box-shadow 0.15s',
+        }}
+      >
+        <span style={{
+          flex:         1,
+          overflow:     'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace:   'nowrap',
+        }}>
+          {selected?.name ?? placeholder}
+        </span>
+        <span aria-hidden style={{
+          fontSize:   10,
+          color:      'var(--text-subtle)',
+          flexShrink: 0,
+          transition: 'transform 0.18s',
+          transform:  open ? 'rotate(180deg)' : 'rotate(0deg)',
+        }}>▾</span>
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          style={{
+            position:     'absolute',
+            top:          'calc(100% + 6px)',
+            left:         0,
+            right:        0,
+            background:   'var(--surface-2)',
+            border:       '1px solid var(--border)',
+            borderRadius: 10,
+            boxShadow:    '0 10px 28px rgba(28, 20, 10, 0.14)',
+            padding:      4,
+            zIndex:       100,
+            maxHeight:    280,
+            overflowY:    'auto',
+          }}
+        >
+          {suppliers.length === 0 ? (
+            <p style={{
+              padding:    '12px 14px',
+              fontSize:   13,
+              color:      'var(--text-subtle)',
+              margin:     0,
+              fontStyle:  'italic',
+            }}>
+              Nenhum fornecedor disponível.
+            </p>
+          ) : suppliers.map(s => {
+            const active = s.id === value
+            return (
+              <button
+                key={s.id}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onClick={() => { onChange(s.id); setOpen(false) }}
+                className="zesto-option"
+                style={{
+                  width:         '100%',
+                  minHeight:     40,
+                  padding:       '8px 12px',
+                  textAlign:     'left',
+                  border:        'none',
+                  borderRadius:  6,
+                  background:    active ? 'var(--action-surface)' : 'transparent',
+                  color:         active ? 'var(--action)' : 'var(--text)',
+                  fontSize:      14,
+                  fontWeight:    active ? 600 : 500,
+                  cursor:        'pointer',
+                  display:       'flex',
+                  alignItems:    'center',
+                  gap:           10,
+                  fontFamily:    'inherit',
+                  transition:    'background 0.12s',
+                }}
+              >
+                <span aria-hidden style={{
+                  width:      14,
+                  display:    'inline-block',
+                  textAlign:  'center',
+                  color:      active ? 'var(--action)' : 'transparent',
+                  fontSize:   13,
+                  fontWeight: 700,
+                  flexShrink: 0,
+                }}>
+                  ✓
+                </span>
+                <span style={{
+                  flex:         1,
+                  overflow:     'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace:   'nowrap',
+                }}>
+                  {s.name}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── UnitCombo ────────────────────────────────────────────────────────────────
+// Combobox para "Compra em": input livre que aceita custom + popover com
+// sugestões pré-definidas (caixa, saco, frasco…). Substitui o <input list=…>
+// que usava o datalist do macOS (com edit pencils e estilo Contacts).
+
+function UnitCombo({
+  value,
+  onChange,
+  onBlur,
+  options,
+  placeholder,
+}: {
+  value:        string
+  onChange:     (v: string) => void
+  onBlur?:      () => void
+  options:      readonly string[]
+  placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointer)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('pointerdown', onPointer)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const q = value.trim().toLowerCase()
+  const filtered = q
+    ? options.filter(o => o.toLowerCase().includes(q))
+    : options
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <input
+        type="text"
+        value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true) }}
+        onFocus={() => { setOpen(true); setFocused(true) }}
+        onBlur={() => {
+          // Delay para permitir clique no item antes de fechar.
+          setTimeout(() => {
+            setFocused(false)
+            onBlur?.()
+          }, 120)
+        }}
+        placeholder={placeholder}
+        className="zesto-form-cell"
+        style={{
+          width:        '100%',
+          height:       44,
+          background:   'var(--surface)',
+          border:       `1px solid ${focused ? 'var(--action)' : 'var(--border)'}`,
+          borderRadius: 6,
+          padding:      '0 10px',
+          color:        'var(--text)',
+          fontSize:     14,
+          outline:      'none',
+          fontFamily:   'inherit',
+          transition:   'border-color 0.15s, box-shadow 0.15s',
+          boxShadow:    focused ? '0 0 0 4px var(--action-glow)' : 'none',
+        }}
+      />
+      {open && filtered.length > 0 && (
+        <div
+          role="listbox"
+          style={{
+            position:     'absolute',
+            top:          'calc(100% + 4px)',
+            left:         0,
+            right:        0,
+            background:   'var(--surface-2)',
+            border:       '1px solid var(--border)',
+            borderRadius: 10,
+            boxShadow:    '0 10px 28px rgba(28, 20, 10, 0.14)',
+            padding:      4,
+            zIndex:       100,
+            maxHeight:    240,
+            overflowY:    'auto',
+          }}
+        >
+          {filtered.map(opt => {
+            const active = opt.toLowerCase() === value.trim().toLowerCase()
+            return (
+              <button
+                key={opt}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onMouseDown={(e) => { e.preventDefault(); onChange(opt); setOpen(false) }}
+                style={{
+                  width:         '100%',
+                  minHeight:     38,
+                  padding:       '6px 12px',
+                  textAlign:     'left',
+                  border:        'none',
+                  borderRadius:  6,
+                  background:    active ? 'var(--action-surface)' : 'transparent',
+                  color:         active ? 'var(--action)' : 'var(--text)',
+                  fontSize:      14,
+                  fontWeight:    active ? 600 : 500,
+                  cursor:        'pointer',
+                  fontFamily:    'inherit',
+                  transition:    'background 0.12s',
+                }}
+              >
+                {opt}
+              </button>
+            )
+          })}
+        </div>
       )}
     </div>
   )
