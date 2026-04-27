@@ -93,6 +93,27 @@ const CASES: Case[] = [
   { tag: 'CRITICAL', input: 'Pimentos em conserva frasco 1kg',
     expect: { name: 'Pimentos em Conserva', unit: 'g', category: 'Mercearia', orderUnit: 'frasco', conversionFactor: 1000 } },
 
+  // ── R-PATCH: container-keep com label antes do produto ──────────────────
+  // Bug histórico: branch CONTAINER_KEEP retornava `before || after`, descartando
+  // o produto quando `before` era só o label. Resultado virava "Lata" puro.
+  // Fix em normalizeArticle.ts: quando `before` é apenas label, ir buscar
+  // produto a `after` e sufixar com "em <suffix>".
+  { tag: 'CRITICAL', input: 'lata 2.5kg tomate pelado',
+    expect: { name: 'Tomate Pelado em Lata', unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 2500 } },
+  { tag: 'CRITICAL', input: 'lata 400g tomate triturado',
+    expect: { name: 'Tomate Triturado em Lata', unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 400 } },
+
+  // ── R-PATCH: categoria por word-boundary + priority phrases ─────────────
+  // Falsos positivos eliminados: "porto" em "portobello" deixa de cair em
+  // Bebidas; "coração" em "coração de boi" e "lombo" em "atum lombo" são
+  // resolvidos por PRIORITY_KEYWORDS antes do loop genérico.
+  { tag: 'CRITICAL', input: 'cogumelos portobello caixa 2kg',
+    expect: { category: 'Frutas e Legumes' } },
+  { tag: 'CRITICAL', input: 'tomate coração de boi 5kg',
+    expect: { category: 'Frutas e Legumes' } },
+  { tag: 'CRITICAL', input: 'atum lombo 2kg',
+    expect: { category: 'Peixe e Marisco' } },
+
   // ── Multipack-equivalente: peso/volume + label + count solto ──────
   // Bug histórico: "6uni" colado e "pack 4" sem suffix ficavam fora do
   // ALT_MULTIPACK_COUNT_RE; multipack era ignorado e conversion_factor

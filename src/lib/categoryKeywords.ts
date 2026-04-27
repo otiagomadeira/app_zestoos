@@ -277,6 +277,40 @@ function stripDiacritics(s: string): string {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '')
 }
 
+/**
+ * Match com word-boundary e tolerância a plurais simples (s/es).
+ * `text` deve já estar lowercase + stripDiacritics. `keyword` é normalizada
+ * dentro da função (não exige preprocessamento do caller).
+ *
+ * Resolve falsos positivos por substring:
+ *   "cogumelos portobello" + keyword "porto" → não casa (lookahead falha)
+ *   "vinho do porto" + keyword "porto"        → casa (fim de string)
+ *   "peras rocha" + keyword "pera"            → casa (s/es opcional)
+ *   "perar" + keyword "pera"                  → não casa (sem boundary)
+ *
+ * Multi-palavra suportado (ex: "vinho do porto", "alho-francês") — o regex
+ * trata espaços e hífens como literais.
+ */
+function containsWord(text: string, keyword: string): boolean {
+  const k       = stripDiacritics(keyword.toLowerCase())
+  const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?:^|\\W)${escaped}(?:s|es)?(?=\\W|$)`, 'i').test(text)
+}
+
+// ── Priority phrases ──────────────────────────────────────────────────────────
+// Produtos compostos cujo nome contém uma palavra que pertence legitimamente
+// a outra categoria. "Tomate coração de boi" tem "coração" (Carnes); "Atum
+// lombo" tem "lombo" (Carnes); mas o produto composto é unambíguo e pertence
+// a F&L / Peixe respetivamente. São avaliados ANTES do shortcut Bebidas e do
+// loop INGREDIENT_KEYWORDS para vencer naturalmente sem alterar a ordem
+// global das categorias.
+const PRIORITY_KEYWORDS: Array<{ phrase: string; category: string }> = [
+  { phrase: 'tomate coração de boi', category: 'Frutas e Legumes' },
+  { phrase: 'coração de boi',        category: 'Frutas e Legumes' },
+  { phrase: 'atum lombo',            category: 'Peixe e Marisco' },
+  { phrase: 'lombo de atum',         category: 'Peixe e Marisco' },
+]
+
 // ── suggestCategory ───────────────────────────────────────────────────────────
 
 export function suggestCategory(ctx: {
@@ -290,40 +324,44 @@ export function suggestCategory(ctx: {
   const lowerRaw = stripDiacritics((raw ?? name).toLowerCase())
 
   // 1. Formato congelado (incondicional)
-  if (FROZEN_WORDS.some(w => {
-    const wn = stripDiacritics(w)
-    return lowerRaw.includes(wn) || lower.includes(wn)
-  })) {
+  if (FROZEN_WORDS.some(w => containsWord(lowerRaw, w) || containsWord(lower, w))) {
     return { category: 'Congelados', confident: true, reason: 'frozen-format' }
   }
 
-  // 2. Bebidas por keyword de ingrediente (antes de container words para não
+  // 2. Priority phrases — produtos compostos com palavra ambígua de outra
+  //    categoria ("tomate coração de boi", "atum lombo"). Avaliado antes do
+  //    shortcut Bebidas para garantir que palavras como 'lombo'/'coração'
+  //    não decidem mal pelo loop genérico.
+  for (const p of PRIORITY_KEYWORDS) {
+    if (containsWord(lowerRaw, p.phrase) || containsWord(lower, p.phrase)) {
+      return { category: p.category, confident: true, reason: 'priority-phrase' }
+    }
+  }
+
+  // 3. Bebidas por keyword de ingrediente (antes de container words para não
   //    reclassificar "Cerveja em lata" como Mercearia)
   const bebidasGroup = INGREDIENT_KEYWORDS.find(g => g.category === 'Bebidas')!
-  if (bebidasGroup.words.some(w => lower.includes(stripDiacritics(w)))) {
+  if (bebidasGroup.words.some(w => containsWord(lower, w))) {
     return { category: 'Bebidas', confident: true, reason: 'ingredient-keyword' }
   }
 
-  // 3. Container words → Mercearia (lata, conserva, pelado, frasco…)
+  // 4. Container words → Mercearia (lata, conserva, pelado, frasco…)
   const lowerLabel = stripDiacritics((label ?? '').toLowerCase())
-  if (CONTAINER_WORDS.some(w => {
-    const wn = stripDiacritics(w)
-    return lowerRaw.includes(wn) || lowerLabel === wn
-  })) {
+  if (CONTAINER_WORDS.some(w => containsWord(lowerRaw, w) || lowerLabel === stripDiacritics(w))) {
     return { category: 'Mercearia', confident: true, reason: 'container-format' }
   }
 
-  // 3.5 Strong-Mercearia override (allowlist) — domina sobre o loop seguinte.
+  // 4.5 Strong-Mercearia override (allowlist) — domina sobre o loop seguinte.
   // STRONG_MERCEARIA_RE só contém palavras sem acentos, mas testamos contra
   // input já normalizado por consistência.
   if (STRONG_MERCEARIA_RE.test(lower) || STRONG_MERCEARIA_RE.test(lowerRaw)) {
     return { category: 'Mercearia', confident: true, reason: 'strong-mercearia' }
   }
 
-  // 4. Keywords de ingrediente (todos os grupos excepto Bebidas, já verificado)
+  // 5. Keywords de ingrediente (todos os grupos excepto Bebidas, já verificado)
   for (const group of INGREDIENT_KEYWORDS) {
     if (group.category === 'Bebidas') continue
-    if (group.words.some(w => lower.includes(stripDiacritics(w)))) {
+    if (group.words.some(w => containsWord(lower, w))) {
       return { category: group.category, confident: true, reason: 'ingredient-keyword' }
     }
   }

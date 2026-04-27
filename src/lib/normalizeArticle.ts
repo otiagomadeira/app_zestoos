@@ -82,6 +82,15 @@ const CONTAINER_KEEP_IN_NAME = new Set([
   'enlatado', 'enlatada', 'enlatados', 'enlatadas',
 ])
 
+// Canoniza CONTAINER_KEEP_IN_NAME para o sufixo display ("em lata"/"em conserva").
+// 'enlatad…' → 'lata' (mesma canonicalização que PACKAGING_MAP em articleDraft.ts).
+function containerSuffix(label: string): string {
+  if (label.startsWith('enlatad')) return 'lata'
+  if (label === 'latas')           return 'lata'
+  if (label === 'conservas')       return 'conserva'
+  return label
+}
+
 // Tokens que sinalizam unit='un' explícita; remover do nome após parsing.
 const UNIT_QTY_TOKENS = new Set([
   'uni', 'unis', 'unid', 'unids',
@@ -122,9 +131,34 @@ export function extractName(line: string, cl: ClassifiedLine): string {
     const after  = line.slice(match.index + match[0].length).trim()
 
     if (cl.label) {
-      // Container que é parte do produto (lata/conserva/enlatado) → manter no nome
+      // Container que é parte do produto (lata/conserva/enlatado).
+      // R-PATCH: o comportamento anterior (`before || after || line`) descartava
+      // o produto quando `before` continha apenas o label — "lata 2.5kg tomate
+      // pelado" virava "Lata".
+      //
+      // Regra conservadora: só canonicalizar quando `before` é apenas o label
+      // (ou vazio). Nesse caso, vamos buscar o produto a `after`, limpamos
+      // residuais e sufixamos com "em <suffix>". Quando `before` já contém o
+      // produto, preservamos para não regredir nomes existentes ("Atum
+      // Conserva", "Atum Enlatado", "Atum em Lata").
       if (CONTAINER_KEEP_IN_NAME.has(cl.label)) {
-        return before || after || line
+        const beforeWords      = before.split(/\s+/).filter(Boolean)
+        const beforeIsOnlyLabel = beforeWords.length === 0 ||
+          (beforeWords.length === 1 && beforeWords[0].toLowerCase() === cl.label)
+
+        if (!beforeIsOnlyLabel) {
+          return before
+        }
+
+        const afterWords    = after.split(/\s+/).filter(Boolean)
+        const idxLabelA     = afterWords.map(w => w.toLowerCase()).indexOf(cl.label)
+        const afterStripped = idxLabelA >= 0
+          ? stripLabelAndConnectors(afterWords, idxLabelA)
+          : afterWords
+        const afterClean    = stripContainersAndBareNumbersList(afterStripped)
+
+        if (afterClean.length === 0) return cl.label
+        return `${afterClean.join(' ')} em ${containerSuffix(cl.label)}`
       }
       // Label antes do qty: strip do label de `before`.
       const beforeWords = before.split(/\s+/).filter(Boolean)
@@ -185,7 +219,17 @@ export function extractName(line: string, cl: ClassifiedLine): string {
   //
   // "20x30" é preservado porque o filtro de bare numbers usa /^\d+[.,]?\d*$/
   // (não casa com tokens que contêm 'x').
-  const words        = line.split(/\s+/).filter(Boolean)
+  const cleaned = stripContainersAndBareNumbersList(line.split(/\s+/).filter(Boolean))
+  return cleaned.length > 0 ? cleaned.join(' ') : line
+}
+
+/**
+ * Strip de "container + número adjacente" (par) ou container standalone como
+ * fallback. Filtra também UNIT_QTY_TOKENS, bare numbers e tokens compactos como
+ * "180uni". Reutilizada pelo branch CONTAINER_KEEP em extractName e pelo branch
+ * type='unit'.
+ */
+function stripContainersAndBareNumbersList(words: string[]): string[] {
   const isBareNumber = (w: string) => /^\d+[.,]?\d*$/.test(w)
   const isContainer  = (w: string) => CONTAINER_CONTEXT_WORDS.includes(w.toLowerCase())
 
@@ -208,11 +252,10 @@ export function extractName(line: string, cl: ClassifiedLine): string {
   } else {
     cleaned = words.filter(w => !isContainer(w))
   }
-  cleaned = cleaned
+  return cleaned
     .filter(w => !UNIT_QTY_TOKENS.has(w.toLowerCase()))
     .filter(w => !isBareNumber(w))
     .filter(w => !COMPACT_UNIT_QTY_RE.test(w))
-  return cleaned.length > 0 ? cleaned.join(' ') : line
 }
 
 // ── Palavras-contexto que indicam unit='un' quando não há quantidade explícita
