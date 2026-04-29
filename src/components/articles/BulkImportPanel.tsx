@@ -4,21 +4,17 @@ import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Article } from '@/types/database'
 import { createArticle, createArticleSizeIfMissing } from '@/lib/supabase'
-import {
-  formatBaseQty,
-  parsePackagingQuantity,
-} from '@/lib/units'
+import { parsePackagingQuantity } from '@/lib/units'
 import {
   parseProductLines,
   recomputeDuplicates,
   type ParsedLine,
 } from '@/lib/parseProductLines'
-import { suggestCategory, ARTICLE_CATEGORIES } from '@/lib/categoryKeywords'
+import { suggestCategory } from '@/lib/categoryKeywords'
 import { maybeLearnAlias, normalizeKey } from '@/lib/ingredientDictionary'
 import { useOrgAliases } from '@/hooks/useOrgAliases'
 import {
   getCountingMode,
-  getCountingModeOptions,
   inferIntent,
   type CountingMode,
 } from '@/lib/articleDraft'
@@ -26,46 +22,12 @@ import { deriveVariantSize } from '@/lib/resolveArticleAction'
 import { getSuggestedUnitWeight } from '@/lib/unitWeightSuggestions'
 import { CONFIDENCE_REASON_LABELS } from '@/lib/articleConfidence'
 
-// ── Estado UI por linha ──────────────────────────────────────────────────────
-// Vive ao lado de ParsedLine. NÃO estendemos ParsedLine porque é o output puro
-// do parser (single source of truth partilhado com o motor/manual). Estado UI
-// (par_level digitado, toggle de counting, expansão) é responsabilidade desta
-// component apenas.
-
-type LineUiState = {
-  parDisplay:           string  // valor digitado em counting_unit (não em base)
-  selectedCountingIdx:  number  // 0 default; muda via toggle multipack
-  gPerUnit:             string  // só usado quando line.unit === 'un'
-  expanded:             boolean
-}
-
-const defaultUiState = (): LineUiState => ({
-  parDisplay:          '',
-  selectedCountingIdx: 0,
-  gPerUnit:            '',
-  expanded:            false,
-})
-
-// Reconstrói as opções de contagem para uma linha. Mesmo motor que o manual
-// (`getCountingModeOptions`) — o `intent` é re-derivado a partir dos campos
-// que `parseProductLines` exporta. O multipack é honrado para que o toggle
-// apareça em casos como "leite 1L pack 6".
-function lineCountingOptions(line: ParsedLine): CountingMode[] {
-  if (line.unit !== 'g' && line.unit !== 'mL' && line.unit !== 'un') return []
-  const factor = parseFloat(line.base_per_order)
-  const supplierSeed = line.stock_unit
-    ? {
-        order_unit:        line.stock_unit,
-        conversion_factor: !isNaN(factor) && factor > 0 ? factor : undefined,
-        source:            'detected' as const,
-      }
-    : undefined
-  const multipack = line.detected_multipack
-    ? { count: line.detected_multipack.count, perPack: line.detected_multipack.perPack }
-    : undefined
-  const intent = inferIntent({ unit: line.unit, supplierSeed, multipack })
-  return getCountingModeOptions({ intent })
-}
+import { type LineUiState, defaultUiState } from './bulk/bulkImportTypes'
+import { lineCountingOptions } from './bulk/bulkImportUtils'
+import { SeedHint } from './bulk/SeedHint'
+import { CountingPill } from './bulk/CountingPill'
+import { ParInput } from './bulk/ParInput'
+import { CategoryChipSelect } from './bulk/CategoryChipSelect'
 
 // ── Estilos base ──────────────────────────────────────────────────────────────
 
@@ -91,294 +53,8 @@ const inputStyle: React.CSSProperties = {
   boxSizing:    'border-box',
 }
 
-// ── SeedHint (read-only) ─────────────────────────────────────────────────────
-// Usado no bloco expandido das OK lines E em DuplicateCard para o chef ver
-// que info o parser captou. Render mesmo quando só há `qty` sem `stock_unit`
-// (caso "tomate pelado 2.5kg") — é a única superfície onde a info aparece
-// no fluxo de variante.
-
-function SeedHint({ line }: { line: ParsedLine }) {
-  if (line.unit.trim() === '') return null
-  const qtyFromOrder = parseFloat(line.base_per_order)
-  const qtyFromLine  = parseFloat(line.qty)
-  const qty          = !isNaN(qtyFromOrder) && qtyFromOrder > 0
-    ? qtyFromOrder
-    : !isNaN(qtyFromLine) && qtyFromLine > 0 ? qtyFromLine : 0
-  const hasQty = qty > 0
-  const mp     = line.detected_multipack
-
-  if (!line.stock_unit && !hasQty && !mp) return null
-
-  // formatBaseQty usa vírgula PT (mesmo formato que o botão "Adicionar
-  // tamanho · {hint}"); formatUnit usa ponto. Antes desta troca o chef via
-  // "Detetado: 2.5 kg" e clicava "Adicionar tamanho · 2,5 kg" — separadores
-  // diferentes para o mesmo valor.
-  let body: string
-  if (mp) {
-    body = line.stock_unit
-      ? `${line.stock_unit} · ${mp.count} x ${formatBaseQty(mp.perPack, line.unit)}`
-      : `${mp.count} x ${formatBaseQty(mp.perPack, line.unit)}`
-  } else if (line.stock_unit && hasQty) {
-    body = `${line.stock_unit} · ${formatBaseQty(qty, line.unit)}`
-  } else if (line.stock_unit) {
-    body = line.stock_unit
-  } else {
-    body = formatBaseQty(qty, line.unit)
-  }
-
-  return (
-    <p style={{
-      fontSize:      11,
-      color:         'var(--text-subtle)',
-      fontFamily:    'JetBrains Mono, monospace',
-      letterSpacing: '0.02em',
-      margin:        0,
-    }}>
-      Detetado: {body}
-    </p>
-  )
-}
-
 // deriveVariantSize vive em `src/lib/resolveArticleAction.ts` — fonte única
 // partilhada entre BulkImportPanel e ArticleForm.
-
-// ── CountingPill — toggle quando há multipack, pill estática quando não há ──
-
-function CountingPill({
-  options, selectedIdx, baseUnit, onSelect,
-}: {
-  options:     CountingMode[]
-  selectedIdx: number
-  baseUnit:    'g' | 'mL' | 'un'
-  onSelect:    (idx: number) => void
-}) {
-  const isToggle = options.length > 1
-  return (
-    <div
-      role={isToggle ? 'group' : undefined}
-      aria-label={isToggle ? 'Formatos de uso' : undefined}
-      style={{ display: 'inline-flex', gap: isToggle ? 4 : 0 }}
-    >
-      {options.map((opt, idx) => {
-        const active = idx === selectedIdx
-        const showDetail = opt.base_per_unit !== 1
-          && opt.count_unit !== 'kg'
-          && opt.count_unit !== 'L'
-          && opt.count_unit !== 'un'
-        return (
-          <button
-            key={`${opt.count_unit}-${idx}`}
-            type="button"
-            onClick={isToggle ? () => onSelect(idx) : undefined}
-            disabled={!isToggle}
-            aria-pressed={isToggle ? active : undefined}
-            style={{
-              height:        44,
-              padding:       '0 10px',
-              borderRadius:  20,
-              border:        `1px solid ${active && isToggle ? 'var(--action)' : 'var(--border)'}`,
-              background:    active && isToggle ? 'var(--action)' : 'var(--surface-2)',
-              color:         'var(--text)',
-              fontFamily:    'JetBrains Mono, monospace',
-              fontSize:      12,
-              fontWeight:    700,
-              cursor:        isToggle ? 'pointer' : 'default',
-              touchAction:   'manipulation',
-              display:       'inline-flex',
-              alignItems:    'center',
-              gap:           4,
-              whiteSpace:    'nowrap',
-            }}
-          >
-            {opt.count_unit}
-            {showDetail && (
-              <span style={{
-                fontWeight: 500,
-                color:      active && isToggle ? 'var(--text)' : 'var(--text-subtle)',
-                opacity:    active && isToggle ? 0.85 : 1,
-              }}>
-                ({formatBaseQty(opt.base_per_unit, baseUnit)})
-              </span>
-            )}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-// ── ParInput — numeric + sufixo (counting_unit) ──────────────────────────────
-
-function ParInput({
-  value, suffix, onChange,
-}: {
-  value:    string
-  suffix:   string
-  onChange: (v: string) => void
-}) {
-  return (
-    <div style={{
-      display:      'inline-flex',
-      alignItems:   'center',
-      height:       44,
-      background:   'var(--surface)',
-      border:       '1px solid var(--border)',
-      borderRadius: 6,
-      padding:      '0 12px',
-      gap:          8,
-      minWidth:     168,
-      flex:         '0 1 auto',
-    }}>
-      <span style={{
-        fontSize:    12,
-        fontWeight:  600,
-        color:       'var(--text-muted)',
-        whiteSpace:  'nowrap',
-      }}>
-        Mínimo:
-      </span>
-      <input
-        type="text"
-        inputMode="decimal"
-        placeholder="0"
-        aria-label="Stock mínimo"
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        style={{
-          width:      56,
-          background: 'transparent',
-          border:     'none',
-          outline:    'none',
-          color:      'var(--text)',
-          fontFamily: 'JetBrains Mono, monospace',
-          fontSize:   16,  // ≥16 evita zoom iOS no focus + sinal de campo principal
-          fontWeight: 700,
-          textAlign:  'right',
-          padding:    0,
-        }}
-      />
-      <span style={{
-        fontSize:   12,
-        fontWeight: 500,
-        color:      'var(--text-muted)',
-        fontFamily: 'JetBrains Mono, monospace',
-        whiteSpace: 'nowrap',
-      }}>
-        {suffix}
-      </span>
-    </div>
-  )
-}
-
-// ── CategoryChipSelect — chip subtil com <select> nativo invisível por cima ──
-// Decisões cravadas:
-//  • Sempre visível na linha compacta (mesmo sem categoria → "definir categoria")
-//  • Lista canónica `ARTICLE_CATEGORIES`. Se a linha já tiver valor fora da
-//    lista (alias legado), preserva-o como opção extra para não fazer reset.
-//  • `<select>` ocupa toda a área da chip com opacity:0 → tap nativo iOS/Android
-//    com picker do OS, zero código de dropdown custom. Chip mantém height=44
-//    para tap target ≥44px, mas estilo (font 10, bg transparente, opacity 0.75)
-//    fá-la ler como secundária ao lado de FORMATOS DE USO e MÍNIMO.
-//  • categoryConfident=true é injectado em handleLineChange quando field='category'.
-function CategoryChipSelect({
-  value, categoryConfident, onChange,
-}: {
-  value:             string
-  categoryConfident: boolean
-  onChange:          (v: string) => void
-}) {
-  const trimmed     = value.trim()
-  const hasCategory = trimmed !== ''
-  const isCanonical = (ARTICLE_CATEGORIES as readonly string[]).includes(trimmed)
-  const showWarning = hasCategory && !categoryConfident
-  const display     = hasCategory ? trimmed : 'definir categoria'
-
-  // Preserva valor não-canónico como opção extra (alias legado, parser exótico).
-  const extraOptions = hasCategory && !isCanonical ? [trimmed] : []
-
-  return (
-    <label style={{
-      position:   'relative',
-      display:    'inline-flex',
-      alignItems: 'center',
-      height:     44,
-      flexShrink: 0,
-      maxWidth:   160,
-      cursor:     'pointer',
-    }}>
-      <span
-        title={`Categoria: ${hasCategory ? trimmed : 'não definida'}${showWarning ? ' (a confirmar)' : ''}`}
-        style={{
-          display:       'inline-flex',
-          alignItems:    'center',
-          gap:           6,
-          padding:       '0 10px',
-          height:        '100%',
-          background:    'transparent',
-          border:        showWarning  ? '1px dashed var(--warning)'
-                       : !hasCategory ? '1px dashed var(--border)'
-                                       : 'none',
-          borderRadius:  6,
-          fontSize:      12,
-          fontWeight:    500,
-          color:         'var(--text-muted)',
-          maxWidth:      220,
-          overflow:      'hidden',
-          textOverflow:  'ellipsis',
-          whiteSpace:    'nowrap',
-          pointerEvents: 'none',
-        }}
-      >
-        <span style={{
-          fontSize:      10,
-          fontWeight:    700,
-          letterSpacing: '0.04em',
-          color:         'var(--text-subtle)',
-          flexShrink:    0,
-        }}>Cat.</span>
-        <span style={{
-          color:        showWarning ? 'var(--warning)' : 'var(--text)',
-          fontStyle:    hasCategory ? 'normal' : 'italic',
-          fontWeight:   hasCategory ? 600 : 500,
-          overflow:     'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace:   'nowrap',
-        }}>{display}</span>
-        <span style={{
-          fontSize:   10,
-          color:      'var(--text-subtle)',
-          flexShrink: 0,
-        }}>▾</span>
-      </span>
-      <select
-        value={hasCategory ? trimmed : ''}
-        onChange={e => onChange(e.target.value)}
-        aria-label="Categoria"
-        style={{
-          position:   'absolute',
-          inset:      0,
-          width:      '100%',
-          height:     '100%',
-          opacity:    0,
-          cursor:     'pointer',
-          appearance: 'none',
-          WebkitAppearance: 'none',
-          border:     'none',
-          background: 'transparent',
-          fontSize:   16, // evita zoom iOS no focus
-        }}
-      >
-        <option value="">— sem categoria —</option>
-        {extraOptions.map(c => (
-          <option key={c} value={c}>{c}</option>
-        ))}
-        {ARTICLE_CATEGORIES.map(c => (
-          <option key={c} value={c}>{c}</option>
-        ))}
-      </select>
-    </label>
-  )
-}
 
 // ── LineRow — linha compacta + bloco expandido ───────────────────────────────
 
@@ -1229,20 +905,38 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
           }
         }
 
-        // Aprender alias só após createArticle bem-sucedido (mesmo invariant que antes).
         // Limitação conhecida deste patch: supplier link NÃO é criado aqui.
         // O fluxo completo (preço + order_unit + conversion_factor) exige 3
         // inputs por linha que tornariam o bulk pesado. Endereçar num patch
         // dedicado de "definir fornecedor em lote".
-        maybeLearnAlias(line.originalName, savedName, aliases, learnAlias, line.wasManuallyEdited)
-
-        return article
+        //
+        // Alias é aprendido FORA deste async — ver loop após Promise.allSettled.
+        // Falha de alias não pode marcar criação bem-sucedida como falhada.
+        return {
+          article,
+          originalName:      line.originalName,
+          savedName,
+          wasManuallyEdited: line.wasManuallyEdited,
+        }
       })
     )
 
     results.forEach((r, i) => {
       if (r.status === 'rejected') failed.push(toCreate[i].name)
     })
+
+    // Aprender aliases só após createArticle bem-sucedido (mesmo invariant que antes).
+    // Isolado num try/catch por linha para que falha de alias NUNCA propague
+    // como falha de criação do artigo (que já está persistido neste ponto).
+    for (const r of results) {
+      if (r.status !== 'fulfilled') continue
+      const { originalName, savedName, wasManuallyEdited } = r.value
+      try {
+        maybeLearnAlias(originalName, savedName, aliases, learnAlias, wasManuallyEdited)
+      } catch (e) {
+        console.warn('maybeLearnAlias falhou (não afeta criação):', { originalName, savedName, error: e })
+      }
+    }
 
     setSaving(false)
 
