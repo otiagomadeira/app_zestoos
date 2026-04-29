@@ -153,7 +153,7 @@ export type CountingMode = {
  *   2. ArticleIntent (parser inference)
  *   3. base_unit (fallback dentro do switch)
  *
- * Single source of truth para a "Conta em: X" pill na UI. Não inventa packaging:
+ * Single source of truth para o bloco "Formatos de uso" na UI. Não inventa packaging:
  * se intent é WEIGHT_LOOSE/VOLUME/COUNTABLE_UNIT e não há size, o count cai no
  * default da família e marca `needs_supplier=true`.
  */
@@ -202,7 +202,16 @@ export function getCountingModeOptions(args: {
 }): CountingMode[] {
   const primary = getCountingMode(args)
 
-  if (args.articleSizes && args.articleSizes.length > 0) return [primary]
+  // Multi-size: cada article_size é um chip independente (formatos de uso
+  // que o chef já gravou). Length=1 dá comportamento idêntico ao anterior
+  // (`[primary]`). Length>1 alimenta o toggle de chips em FORMATOS DE USO.
+  if (args.articleSizes && args.articleSizes.length > 0) {
+    return args.articleSizes.map(s => ({
+      count_unit:     s.label,
+      base_per_unit:  s.base_per_unit,
+      needs_supplier: false,
+    }))
+  }
 
   if ((args.intent.kind === 'PACKAGED_WEIGHT' || args.intent.kind === 'PACKAGED_VOLUME')
       && args.intent.multipack) {

@@ -485,17 +485,30 @@ export async function createArticleSizeIfMissing(
   articleId:   string,
   label:       string,
   basePerUnit: number,
-): Promise<void> {
-  // ignoreDuplicates: true → PostgREST envia "ON CONFLICT DO NOTHING" sem
-  // target, que apanha qualquer UNIQUE incluindo expression indexes
-  // (uniq_article_sizes_article_label_lc).
-  const { error } = await supabase
+): Promise<{ created: boolean }> {
+  // ignoreDuplicates: true → PostgREST envia "ON CONFLICT DO NOTHING".
+  // .select() devolve a row inserida; em conflito devolve [] (PostgREST
+  // omite RETURNING quando ON CONFLICT DO NOTHING não inseriu) — daí o
+  // discriminador `created`. Permite à UI distinguir "tamanho adicionado"
+  // de "tamanho já existe" sem outra round-trip.
+  //
+  // Nota: o ignoreDuplicates actual da supabase-js não captura expression
+  // indexes (caso de `uniq_article_sizes_article_label_lc` = lower(label)).
+  // Quando isso acontece, o Postgres devolve 23505 e o cliente lança 409.
+  // Tratamos esse code como "tamanho já existe" — equivalente semântico ao
+  // empty-array path. Outros erros propagam normalmente.
+  const { data, error } = await supabase
     .from('article_sizes')
     .upsert(
       { article_id: articleId, label, base_per_unit: basePerUnit, sort_order: 0 },
       { ignoreDuplicates: true },
     )
-  if (error) throw error
+    .select()
+  if (error) {
+    if ((error as { code?: string }).code === '23505') return { created: false }
+    throw error
+  }
+  return { created: (data?.length ?? 0) > 0 }
 }
 
 export async function createArticle(input: {

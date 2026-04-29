@@ -194,6 +194,23 @@ export function extractName(line: string, cl: ClassifiedLine): string {
           (beforeWords.length === 1 && beforeWords[0].toLowerCase() === cl.label)
 
         if (!beforeIsOnlyLabel) {
+          // Simétrico ao branch beforeIsOnlyLabel (label antes do produto):
+          // quando o label vem DEPOIS do produto, mas antes da qty
+          // ("tomate pelado lata 2.5kg"), strip do label + connectors e
+          // sufixar com "em <suffix>". Sem isto, "lata" vazava como nome
+          // ("Tomate Pelado Lata") e a chave canónica divergia da forma
+          // "lata 2.5kg tomate pelado", quebrando a duplicate detection.
+          //
+          // Conservador: só dispara quando a ÚLTIMA palavra de before é o
+          // label. Label no meio (improvável dado classifyLine.findAdjacentPackagingLabel)
+          // mantém o comportamento antigo.
+          const lastIdx = beforeWords.length - 1
+          if (beforeWords[lastIdx].toLowerCase() === cl.label) {
+            const stripped = stripLabelAndConnectors(beforeWords, lastIdx)
+            if (stripped.length > 0) {
+              return `${stripped.join(' ')} em ${containerSuffix(cl.label)}`
+            }
+          }
           return before
         }
 

@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import type { Article } from '@/types/database'
 import { createArticle, createArticleSizeIfMissing } from '@/lib/supabase'
 import {
-  formatUnit,
   formatBaseQty,
   parsePackagingQuantity,
 } from '@/lib/units'
@@ -23,6 +22,7 @@ import {
   inferIntent,
   type CountingMode,
 } from '@/lib/articleDraft'
+import { deriveVariantSize } from '@/lib/resolveArticleAction'
 import { getSuggestedUnitWeight } from '@/lib/unitWeightSuggestions'
 import { CONFIDENCE_REASON_LABELS } from '@/lib/articleConfidence'
 
@@ -73,7 +73,7 @@ const labelStyle: React.CSSProperties = {
   fontSize:      10,
   fontWeight:    700,
   letterSpacing: '0.08em',
-  color:         'var(--text-on-primary-muted)',
+  color:         'var(--text-muted)',
   marginBottom:  4,
   display:       'block',
 }
@@ -81,37 +81,55 @@ const labelStyle: React.CSSProperties = {
 const inputStyle: React.CSSProperties = {
   width:        '100%',
   height:       44,
-  background:   'var(--border-on-primary-soft)',
-  border:       '1px solid var(--border-on-primary)',
+  background:   'var(--surface)',
+  border:       '1px solid var(--border)',
   borderRadius: 6,
   padding:      '0 8px',
-  color:        'var(--text-on-primary)',
+  color:        'var(--text)',
   fontSize:     13,
   outline:      'none',
   boxSizing:    'border-box',
 }
 
-// ── SeedHint (read-only — só visível em expansão) ────────────────────────────
+// ── SeedHint (read-only) ─────────────────────────────────────────────────────
+// Usado no bloco expandido das OK lines E em DuplicateCard para o chef ver
+// que info o parser captou. Render mesmo quando só há `qty` sem `stock_unit`
+// (caso "tomate pelado 2.5kg") — é a única superfície onde a info aparece
+// no fluxo de variante.
 
 function SeedHint({ line }: { line: ParsedLine }) {
-  if (!line.stock_unit) return null
-  const qty    = parseFloat(line.base_per_order)
-  const hasQty = !isNaN(qty) && qty > 0 && line.unit.trim() !== ''
+  if (line.unit.trim() === '') return null
+  const qtyFromOrder = parseFloat(line.base_per_order)
+  const qtyFromLine  = parseFloat(line.qty)
+  const qty          = !isNaN(qtyFromOrder) && qtyFromOrder > 0
+    ? qtyFromOrder
+    : !isNaN(qtyFromLine) && qtyFromLine > 0 ? qtyFromLine : 0
+  const hasQty = qty > 0
   const mp     = line.detected_multipack
 
+  if (!line.stock_unit && !hasQty && !mp) return null
+
+  // formatBaseQty usa vírgula PT (mesmo formato que o botão "Adicionar
+  // tamanho · {hint}"); formatUnit usa ponto. Antes desta troca o chef via
+  // "Detetado: 2.5 kg" e clicava "Adicionar tamanho · 2,5 kg" — separadores
+  // diferentes para o mesmo valor.
   let body: string
   if (mp) {
-    body = `${line.stock_unit} · ${mp.count} x ${formatUnit(mp.perPack, line.unit)}`
-  } else if (hasQty) {
-    body = `${line.stock_unit} · ${formatUnit(qty, line.unit)}`
-  } else {
     body = line.stock_unit
+      ? `${line.stock_unit} · ${mp.count} x ${formatBaseQty(mp.perPack, line.unit)}`
+      : `${mp.count} x ${formatBaseQty(mp.perPack, line.unit)}`
+  } else if (line.stock_unit && hasQty) {
+    body = `${line.stock_unit} · ${formatBaseQty(qty, line.unit)}`
+  } else if (line.stock_unit) {
+    body = line.stock_unit
+  } else {
+    body = formatBaseQty(qty, line.unit)
   }
 
   return (
     <p style={{
       fontSize:      11,
-      color:         'var(--text-on-primary-faint)',
+      color:         'var(--text-subtle)',
       fontFamily:    'JetBrains Mono, monospace',
       letterSpacing: '0.02em',
       margin:        0,
@@ -120,6 +138,9 @@ function SeedHint({ line }: { line: ParsedLine }) {
     </p>
   )
 }
+
+// deriveVariantSize vive em `src/lib/resolveArticleAction.ts` — fonte única
+// partilhada entre BulkImportPanel e ArticleForm.
 
 // ── CountingPill — toggle quando há multipack, pill estática quando não há ──
 
@@ -135,7 +156,7 @@ function CountingPill({
   return (
     <div
       role={isToggle ? 'group' : undefined}
-      aria-label={isToggle ? 'Conta em' : undefined}
+      aria-label={isToggle ? 'Formatos de uso' : undefined}
       style={{ display: 'inline-flex', gap: isToggle ? 4 : 0 }}
     >
       {options.map((opt, idx) => {
@@ -155,9 +176,9 @@ function CountingPill({
               height:        44,
               padding:       '0 10px',
               borderRadius:  20,
-              border:        `1px solid ${active && isToggle ? 'var(--action)' : 'var(--border-on-primary)'}`,
-              background:    active && isToggle ? 'var(--action)' : 'var(--border-on-primary-soft)',
-              color:         'var(--text-on-primary)',
+              border:        `1px solid ${active && isToggle ? 'var(--action)' : 'var(--border)'}`,
+              background:    active && isToggle ? 'var(--action)' : 'var(--surface-2)',
+              color:         'var(--text)',
               fontFamily:    'JetBrains Mono, monospace',
               fontSize:      12,
               fontWeight:    700,
@@ -173,7 +194,7 @@ function CountingPill({
             {showDetail && (
               <span style={{
                 fontWeight: 500,
-                color:      active && isToggle ? 'var(--text-on-primary)' : 'var(--text-on-primary-faint)',
+                color:      active && isToggle ? 'var(--text)' : 'var(--text-subtle)',
                 opacity:    active && isToggle ? 0.85 : 1,
               }}>
                 ({formatBaseQty(opt.base_per_unit, baseUnit)})
@@ -200,8 +221,8 @@ function ParInput({
       display:      'inline-flex',
       alignItems:   'center',
       height:       44,
-      background:   'var(--border-on-primary-soft)',
-      border:       '1px solid var(--border-on-primary)',
+      background:   'var(--surface)',
+      border:       '1px solid var(--border)',
       borderRadius: 6,
       padding:      '0 12px',
       gap:          8,
@@ -211,7 +232,7 @@ function ParInput({
       <span style={{
         fontSize:    12,
         fontWeight:  600,
-        color:       'var(--text-on-primary-muted)',
+        color:       'var(--text-muted)',
         whiteSpace:  'nowrap',
       }}>
         Mínimo:
@@ -228,7 +249,7 @@ function ParInput({
           background: 'transparent',
           border:     'none',
           outline:    'none',
-          color:      'var(--text-on-primary)',
+          color:      'var(--text)',
           fontFamily: 'JetBrains Mono, monospace',
           fontSize:   16,  // ≥16 evita zoom iOS no focus + sinal de campo principal
           fontWeight: 700,
@@ -239,7 +260,7 @@ function ParInput({
       <span style={{
         fontSize:   12,
         fontWeight: 500,
-        color:      'var(--text-on-primary-muted)',
+        color:      'var(--text-muted)',
         fontFamily: 'JetBrains Mono, monospace',
         whiteSpace: 'nowrap',
       }}>
@@ -257,7 +278,7 @@ function ParInput({
 //  • `<select>` ocupa toda a área da chip com opacity:0 → tap nativo iOS/Android
 //    com picker do OS, zero código de dropdown custom. Chip mantém height=44
 //    para tap target ≥44px, mas estilo (font 10, bg transparente, opacity 0.75)
-//    fá-la ler como secundária ao lado de CONTA EM e MÍNIMO.
+//    fá-la ler como secundária ao lado de FORMATOS DE USO e MÍNIMO.
 //  • categoryConfident=true é injectado em handleLineChange quando field='category'.
 function CategoryChipSelect({
   value, categoryConfident, onChange,
@@ -295,12 +316,12 @@ function CategoryChipSelect({
           height:        '100%',
           background:    'transparent',
           border:        showWarning  ? '1px dashed var(--warning)'
-                       : !hasCategory ? '1px dashed var(--border-on-primary)'
+                       : !hasCategory ? '1px dashed var(--border)'
                                        : 'none',
           borderRadius:  6,
           fontSize:      12,
           fontWeight:    500,
-          color:         'var(--text-on-primary-muted)',
+          color:         'var(--text-muted)',
           maxWidth:      220,
           overflow:      'hidden',
           textOverflow:  'ellipsis',
@@ -312,11 +333,11 @@ function CategoryChipSelect({
           fontSize:      10,
           fontWeight:    700,
           letterSpacing: '0.04em',
-          color:         'var(--text-on-primary-faint)',
+          color:         'var(--text-subtle)',
           flexShrink:    0,
         }}>Cat.</span>
         <span style={{
-          color:        showWarning ? 'var(--warning)' : 'var(--text-on-primary)',
+          color:        showWarning ? 'var(--warning)' : 'var(--text)',
           fontStyle:    hasCategory ? 'normal' : 'italic',
           fontWeight:   hasCategory ? 600 : 500,
           overflow:     'hidden',
@@ -325,7 +346,7 @@ function CategoryChipSelect({
         }}>{display}</span>
         <span style={{
           fontSize:   10,
-          color:      'var(--text-on-primary-faint)',
+          color:      'var(--text-subtle)',
           flexShrink: 0,
         }}>▾</span>
       </span>
@@ -406,13 +427,13 @@ function LineRow({
   return (
     <div style={{
       background:    isInvalid     ? 'var(--error-surface)'
-                   : isResolved    ? 'var(--success-surface-on-primary)'
-                                   : 'var(--border-on-primary-soft)',
+                   : isResolved    ? 'var(--success-surface)'
+                                   : 'var(--surface)',
       border:        `1px solid ${
         isInvalid     ? 'var(--error-border)'
       : showLow       ? 'var(--warning)'
-      : isResolved    ? 'var(--success-border-on-primary)'
-                      : 'var(--border-on-primary-soft)'
+      : isResolved    ? 'var(--success-border)'
+                      : 'var(--border)'
       }`,
       borderRadius:  8,
       padding:       '12px 14px',
@@ -427,7 +448,7 @@ function LineRow({
           alignItems:   'flex-start',
           gap:          8,
           fontSize:     11,
-          color:        'var(--text-on-primary)',
+          color:        'var(--text)',
           background:   'var(--error-surface)',
           border:       '1px solid var(--warning)',
           borderRadius: 6,
@@ -468,7 +489,7 @@ function LineRow({
                 width:         8,
                 height:        8,
                 borderRadius:  '50%',
-                background:    'var(--text-on-primary-faint)',
+                background:    'var(--text-subtle)',
                 marginLeft:    6,
                 verticalAlign: 'middle',
               }}
@@ -487,7 +508,7 @@ function LineRow({
               borderRadius:   6,
               border:         'none',
               background:     'transparent',
-              color:          'var(--text-on-primary-faint)',
+              color:          'var(--text-subtle)',
               fontSize:       14,
               cursor:         'pointer',
               display:        'flex',
@@ -545,7 +566,7 @@ function LineRow({
               style={{
                 fontSize:    11,
                 fontStyle:   'italic',
-                color:       'var(--text-on-primary-faint)',
+                color:       'var(--text-subtle)',
                 flexShrink:  0,
                 whiteSpace:  'nowrap',
               }}
@@ -564,7 +585,7 @@ function LineRow({
               borderRadius:   6,
               border:         'none',
               background:     'transparent',
-              color:          'var(--text-on-primary-faint)',
+              color:          'var(--text-subtle)',
               fontSize:       18,
               cursor:         'pointer',
               display:        'flex',
@@ -623,7 +644,7 @@ function LineRow({
               borderRadius:   6,
               border:         'none',
               background:     'transparent',
-              color:          'var(--text-on-primary-faint)',
+              color:          'var(--text-subtle)',
               fontSize:       18,
               cursor:         'pointer',
               display:        'flex',
@@ -647,7 +668,7 @@ function LineRow({
           gap:           10,
           marginTop:     4,
           paddingTop:    10,
-          borderTop:     '1px dashed var(--border-on-primary)',
+          borderTop:     '1px dashed var(--border)',
         }}>
           {isUn && (
             <div>
@@ -690,7 +711,7 @@ function LineRow({
               </div>
               <p style={{
                 fontSize:   10,
-                color:      'var(--text-on-primary-faint)',
+                color:      'var(--text-subtle)',
                 margin:     '4px 0 0',
                 lineHeight: 1.4,
               }}>
@@ -706,7 +727,7 @@ function LineRow({
               margin:      0,
               paddingLeft: 16,
               fontSize:    11,
-              color:       'var(--text-on-primary-faint)',
+              color:       'var(--text-subtle)',
               listStyle:   'disc',
             }}>
               {line.confidenceReasons.map(r => (
@@ -745,9 +766,9 @@ function OkCard({
             fontSize:      9,
             fontWeight:    700,
             letterSpacing: '0.1em',
-            color:         'var(--success-on-primary)',
-            background:    'var(--success-surface-on-primary)',
-            border:        '1px solid var(--success-border-on-primary)',
+            color:         'var(--success)',
+            background:    'var(--success-surface)',
+            border:        '1px solid var(--success-border)',
             borderRadius:  4,
             padding:       '1px 6px',
           }}>
@@ -766,69 +787,156 @@ function PartialCard({
   return <LineRow {...rest} onResolved={onResolved} />
 }
 
+type AddSizeStatus = 'idle' | 'adding' | 'added' | 'exists' | 'error'
+
 function DuplicateCard({
-  line, onForceCreate, onDelete,
-}: { line: ParsedLine; onForceCreate: (id: string) => void; onDelete: (id: string) => void }) {
+  line, addSizeStatus, onAddSize, onForceCreate, onDelete,
+}: {
+  line:          ParsedLine
+  addSizeStatus: AddSizeStatus
+  onAddSize:     (id: string) => void
+  onForceCreate: (id: string) => void
+  onDelete:      (id: string) => void
+}) {
+  // Variante = duplicado real (existe artigo, não só repetido no batch) com
+  // size derivável da linha. Só nesse caso oferecemos "Adicionar tamanho".
+  // line.isDuplicateInBatch sem line.isDuplicate é uma repetição interna do
+  // texto colado — não há existingArticleId, não há onde adicionar size.
+  const size       = line.isDuplicate && line.existingArticleId ? deriveVariantSize(line) : null
+  const canAddSize = size !== null
+  const isResolved = addSizeStatus === 'added'
+  const isAdding   = addSizeStatus === 'adding'
+
+  // Base fallback: parser canonicalizou para "X em <container>" mas só "X"
+  // existe na DB. Mostrar o nome do artigo existente (não o canónico) +
+  // microcopy distinta para o chef saber que é variante e não duplicado puro.
+  const isFallback   = !!line.isBaseFallback && !!line.existingArticleName
+  const displayName  = isFallback ? line.existingArticleName! : line.name
+  const statusCopy   = line.isDuplicateInBatch && !line.isDuplicate
+    ? 'repetido na lista'
+    : isFallback
+      ? 'variante'
+      : 'já existe'
+
   return (
     <div style={{
-      background:     'var(--border-on-primary-soft)',
-      border:         '1px solid var(--border-on-primary-soft)',
+      background:     isResolved ? 'var(--success-surface)' : 'var(--surface)',
+      border:         `1px solid ${isResolved ? 'var(--success-border)' : 'var(--surface)'}`,
       borderRadius:   8,
       padding:        '10px 12px',
       display:        'flex',
-      alignItems:     'center',
-      justifyContent: 'space-between',
+      flexDirection:  'column',
       gap:            8,
     }}>
-      <div style={{ minWidth: 0 }}>
-        <span style={{ fontSize: 13, color: 'var(--text-on-primary-faint)', textDecoration: 'line-through' }}>
-          {line.name}
-        </span>
-        <span style={{ fontSize: 11, color: 'var(--text-on-primary-faint)', marginLeft: 8 }}>
-          {line.isDuplicateInBatch && !line.isDuplicate ? 'repetido na lista' : 'já existe'}
-        </span>
-        <SeedHint line={line} />
+      <div style={{
+        display:        'flex',
+        alignItems:     'center',
+        justifyContent: 'space-between',
+        gap:            8,
+      }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <span style={{ fontSize: 13, color: 'var(--text-subtle)', textDecoration: isResolved ? 'none' : 'line-through' }}>
+            {displayName}
+          </span>
+          <span style={{ fontSize: 11, color: 'var(--text-subtle)', marginLeft: 8 }}>
+            {statusCopy}
+          </span>
+          {/* Em base fallback, mostrar o que o chef escreveu vs o canónico
+              que matchou. Sem isto o chef perde a info "tinha escrito lata". */}
+          {isFallback && (
+            <p style={{ fontSize: 11, color: 'var(--text-subtle)', margin: '2px 0 0', fontStyle: 'italic' }}>
+              escrito como “{line.name}”
+            </p>
+          )}
+          <SeedHint line={line} />
+          {addSizeStatus === 'exists' && (
+            <p style={{ fontSize: 11, color: 'var(--warning)', margin: '4px 0 0', fontWeight: 600 }}>
+              Tamanho já existe
+            </p>
+          )}
+          {addSizeStatus === 'added' && (
+            <p style={{ fontSize: 11, color: 'var(--success)', margin: '4px 0 0', fontWeight: 600 }}>
+              ✓ Tamanho adicionado
+            </p>
+          )}
+          {addSizeStatus === 'error' && (
+            <p style={{ fontSize: 11, color: 'var(--error)', margin: '4px 0 0', fontWeight: 600 }}>
+              Falha ao adicionar tamanho
+            </p>
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          <button
+            onClick={() => onForceCreate(line.id)}
+            disabled={isAdding || isResolved}
+            style={{
+              height:       44,
+              borderRadius: 6,
+              border:       '1px solid var(--action-border)',
+              background:   'var(--action-surface)',
+              color:        'var(--action)',
+              fontSize:     11,
+              fontWeight:   600,
+              cursor:       (isAdding || isResolved) ? 'not-allowed' : 'pointer',
+              padding:      '0 10px',
+              whiteSpace:   'nowrap',
+              opacity:      (isAdding || isResolved) ? 0.5 : 1,
+            }}
+          >
+            Criar mesmo assim
+          </button>
+          <button
+            onClick={() => onDelete(line.id)}
+            title="Remover da lista"
+            aria-label="Remover da lista"
+            style={{
+              width:          44,
+              height:         44,
+              borderRadius:   6,
+              border:         '1px solid var(--border)',
+              background:     'none',
+              color:          'var(--text-subtle)',
+              fontSize:       14,
+              cursor:         'pointer',
+              display:        'flex',
+              alignItems:     'center',
+              justifyContent: 'center',
+              flexShrink:     0,
+            }}
+          >
+            ×
+          </button>
+        </div>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+
+      {/* Botão "Adicionar tamanho" — só duplicate-real com size derivável.
+          Vive numa segunda linha em vez de ao lado de "Criar mesmo assim"
+          para não competir visualmente: as duas acções são mutuamente
+          exclusivas mas a variante é mais comum, merece destaque próprio. */}
+      {canAddSize && size && !isResolved && addSizeStatus !== 'exists' && (
         <button
-          onClick={() => onForceCreate(line.id)}
+          onClick={() => onAddSize(line.id)}
+          disabled={isAdding}
           style={{
             height:       44,
             borderRadius: 6,
-            border:       '1px solid var(--action-border)',
-            background:   'var(--action-surface)',
-            color:        'var(--action)',
-            fontSize:     11,
+            border:       '1px solid var(--action)',
+            background:   isAdding ? 'var(--surface-2)' : 'var(--action)',
+            color:        isAdding ? 'var(--text-muted)' : 'var(--text-on-primary)',
+            fontSize:     12,
             fontWeight:   600,
-            cursor:       'pointer',
-            padding:      '0 10px',
-            whiteSpace:   'nowrap',
-          }}
-        >
-          Criar mesmo assim
-        </button>
-        <button
-          onClick={() => onDelete(line.id)}
-          title="Remover da lista"
-          aria-label="Remover da lista"
-          style={{
-            width:          44,
-            height:         44,
-            borderRadius:   6,
-            border:         '1px solid var(--border-on-primary-soft)',
-            background:     'none',
-            color:          'var(--text-on-primary-faint)',
-            fontSize:       14,
-            cursor:         'pointer',
-            display:        'flex',
-            alignItems:     'center',
+            cursor:       isAdding ? 'wait' : 'pointer',
+            padding:      '0 14px',
+            display:      'flex',
+            alignItems:   'center',
             justifyContent: 'center',
-            flexShrink:     0,
+            gap:          6,
+            touchAction:  'manipulation',
           }}
         >
-          ×
+          {isAdding ? 'A adicionar…' : `Adicionar tamanho · ${size.label}`}
         </button>
-      </div>
+      )}
     </div>
   )
 }
@@ -859,6 +967,13 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
   const [justResolvedIds, setJustResolvedIds] = useState<Set<string>>(new Set())
   // Override local de duplicados: IDs que o utilizador forçou criar
   const [forcedIds, setForcedIds] = useState<Set<string>>(new Set())
+  // Estado por-linha do fluxo "Adicionar tamanho" — vive separado de
+  // forcedIds porque é uma 3ª acção que não cria artigo (só size). Mapa
+  // local porque cada linha resolve independentemente; sem batch save.
+  const [addSizeStatus, setAddSizeStatus] = useState<Map<string, AddSizeStatus>>(new Map())
+  // Total de tamanhos adicionados via fluxo de variante. Aparece no resumo
+  // do success state ao lado dos artigos criados.
+  const [variantsAddedCount, setVariantsAddedCount] = useState(0)
 
   const handleResolved = useCallback((id: string) => {
     setJustResolvedIds(s => new Set([...s, id]))
@@ -874,6 +989,38 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
       setJustResolvedIds(s => { const next = new Set(s); next.delete(id); return next })
     }, 800)
   }, [])
+
+  // Adicionar tamanho a artigo existente (fluxo variante). Não cria artigo,
+  // não chama maybeLearnAlias (não há nome novo aprendido), não toca em
+  // suppliers. Usa createArticleSizeIfMissing com discriminador `created`
+  // para distinguir "adicionado" de "tamanho já existe" (sem 2ª round-trip).
+  // O parent é notificado via onBatchCreated() para invalidar caches/listas.
+  const handleAddSize = useCallback(async (id: string) => {
+    const line = lines.find(l => l.id === id)
+    if (!line || !line.existingArticleId) return
+    const size = deriveVariantSize(line)
+    if (!size) return
+
+    setAddSizeStatus(s => new Map(s).set(id, 'adding'))
+    try {
+      const { created } = await createArticleSizeIfMissing(line.existingArticleId, size.label, size.basePerUnit)
+      setAddSizeStatus(s => new Map(s).set(id, created ? 'added' : 'exists'))
+      if (created) {
+        setVariantsAddedCount(c => c + 1)
+        // Pequeno delay para o chef ver o feedback verde antes da linha sair.
+        setTimeout(() => {
+          setLines(prev => prev.map(l => l.id === id ? { ...l, deleted: true } : l))
+        }, 800)
+        // NÃO chamar onBatchCreated() aqui: no parent (ArticlesScreen) ele
+        // fecha o panel. Chef pode querer adicionar mais variantes a outras
+        // linhas. O ArticleForm fetcha sizes on mount, portanto qualquer
+        // artigo aberto a seguir já vê o novo size.
+      }
+    } catch (e) {
+      console.error('handleAddSize falhou:', { id, articleId: line.existingArticleId, label: size.label, error: e })
+      setAddSizeStatus(s => new Map(s).set(id, 'error'))
+    }
+  }, [lines])
 
   const handleIgnoreAllDuplicates = useCallback((ids: string[]) => {
     setLines(prev => prev.map(l => ids.includes(l.id) ? { ...l, deleted: true } : l))
@@ -939,7 +1086,10 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
   const handleProcess = () => {
     const parsed = parseProductLines(rawText, articles, aliases)
     setLines(parsed)
-    setUiState(new Map())  // reset UI state em cada processamento
+    setUiState(new Map())          // reset UI state em cada processamento
+    setAddSizeStatus(new Map())    // reset estado per-linha de variantes
+    setForcedIds(new Set())
+    setVariantsAddedCount(0)
     setError(null)
     setResult(null)
     setStep('preview')
@@ -1114,6 +1264,9 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
     setRawText('')
     setLines([])
     setUiState(new Map())
+    setAddSizeStatus(new Map())
+    setForcedIds(new Set())
+    setVariantsAddedCount(0)
     setError(null)
     setResult(null)
     setSuccessCount(0)
@@ -1124,8 +1277,11 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
 
-      {/* Header */}
-      <div style={{ marginBottom: 24 }}>
+      {/* Header — gramática editorial alinhada com ArticleForm:
+          Playfair Display 22px weight 500 --action com `·` separador.
+          Mesma superfície (--bg), mesma cor de dot (--text-subtle) que o
+          manual — identidade única, preparada para light/dark mode futuro. */}
+      <div style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
           {step === 'preview' && (
             <button
@@ -1133,7 +1289,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
               style={{
                 background: 'none',
                 border:     'none',
-                color:      'var(--text-on-primary-muted)',
+                color:      'var(--text-muted)',
                 fontSize:   20,
                 cursor:     'pointer',
                 padding:    0,
@@ -1143,11 +1299,25 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
               ←
             </button>
           )}
-          <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-on-primary)', margin: 0 }}>
-            {step === 'input' ? 'Importar Artigos' : 'Pré-visualização'}
-          </h2>
+          <h1 style={{
+            fontFamily:    "'Playfair Display', serif",
+            fontSize:      22,
+            fontWeight:    500,
+            color:         'var(--action)',
+            letterSpacing: '-0.01em',
+            margin:        0,
+            lineHeight:    1.2,
+          }}>
+            {step === 'input' ? 'Importar' : 'Pré-visualização'}
+            <span style={{
+              color:      'var(--text-muted)',
+              margin:     '0 8px',
+              fontWeight: 400,
+            }}>·</span>
+            {step === 'input' ? 'Artigos' : primaryLines.length}
+          </h1>
         </div>
-        <p style={{ fontSize: 13, color: 'var(--text-on-primary-muted)', margin: 0 }}>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
           {step === 'input'
             ? 'Cola ou escreve uma lista — um produto por linha.'
             : [
@@ -1155,12 +1325,13 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
                 lowOkLines.length > 0 ? `${lowOkLines.length} a confirmar` : null,
                 partialLines.length > 0 ? `${partialLines.length} a resolver` : null,
                 dupLines.length > 0 ? `${dupLines.length} duplicado${dupLines.length !== 1 ? 's' : ''}` : null,
+                variantsAddedCount > 0 ? `${variantsAddedCount} tamanho${variantsAddedCount !== 1 ? 's' : ''} adicionado${variantsAddedCount !== 1 ? 's' : ''}` : null,
               ].filter(Boolean).join(' · ')}
         </p>
         {step === 'preview' && (
           <p style={{
             fontSize:   11,
-            color:      'var(--text-on-primary-faint)',
+            color:      'var(--text-subtle)',
             margin:     '6px 0 0',
             lineHeight: 1.5,
             fontStyle:  'italic',
@@ -1170,6 +1341,14 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
         )}
       </div>
 
+      {/* Hairline separator — separa header do fluxo, sem peso de bloco. */}
+      <div style={{
+        flexShrink:   0,
+        height:       1,
+        background:   'var(--border)',
+        marginBottom: 16,
+      }} />
+
       {/* Error banner */}
       {error && (
         <div style={{
@@ -1177,7 +1356,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
           border:       '1px solid var(--error-border)',
           borderRadius: 8,
           padding:      '10px 14px',
-          color:        'var(--text-on-primary)',
+          color:        'var(--text)',
           fontSize:     13,
           marginBottom: 16,
         }}>
@@ -1192,7 +1371,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
           border:       '1px solid var(--error-border)',
           borderRadius: 8,
           padding:      '10px 14px',
-          color:        'var(--text-on-primary)',
+          color:        'var(--text)',
           fontSize:     13,
           marginBottom: 16,
         }}>
@@ -1213,11 +1392,11 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
             paddingTop:     48,
             paddingBottom:  48,
           }}>
-            <div style={{ fontSize: 32, marginBottom: 8, color: 'var(--success-on-primary)' }}>✓</div>
-            <p style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-on-primary)', margin: 0 }}>
+            <div style={{ fontSize: 32, marginBottom: 8, color: 'var(--success)' }}>✓</div>
+            <p style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', margin: 0 }}>
               {successCount} artigo{successCount !== 1 ? 's' : ''} criado{successCount !== 1 ? 's' : ''}
             </p>
-            <p style={{ fontSize: 13, color: 'var(--text-on-primary-faint)', margin: 0 }}>
+            <p style={{ fontSize: 13, color: 'var(--text-subtle)', margin: 0 }}>
               com sucesso
             </p>
           </div>
@@ -1227,7 +1406,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div>
               <label style={labelStyle}>LISTA DE PRODUTOS</label>
-              <p style={{ fontSize: 12, color: 'var(--text-on-primary-faint)', marginBottom: 8, lineHeight: 1.5 }}>
+              <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginBottom: 8, lineHeight: 1.5 }}>
                 Exemplo:<br />
                 Tomate pelado lata 2.5kg<br />
                 Mozzarella fresca 125g<br />
@@ -1250,7 +1429,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
               />
             </div>
             {lineCount > 0 && (
-              <p style={{ fontSize: 12, color: 'var(--text-on-primary-faint)', margin: 0 }}>
+              <p style={{ fontSize: 12, color: 'var(--text-subtle)', margin: 0 }}>
                 {lineCount} linha{lineCount !== 1 ? 's' : ''}
               </p>
             )}
@@ -1260,7 +1439,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
         {step === 'preview' && (
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {primaryLines.length === 0 && (
-              <p style={{ color: 'var(--text-on-primary-faint)', fontSize: 14, textAlign: 'center', paddingTop: 32 }}>
+              <p style={{ color: 'var(--text-subtle)', fontSize: 14, textAlign: 'center', paddingTop: 32 }}>
                 Nenhuma linha válida. Volta atrás e revê o texto.
               </p>
             )}
@@ -1269,9 +1448,9 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
               <div style={{ marginBottom: 28 }}>
                 <div style={{
                   fontSize:      11,
-                  fontWeight:    700,
-                  letterSpacing: '0.1em',
-                  color:         'var(--success-on-primary)',
+                  fontWeight:    800,
+                  letterSpacing: '0.16em',
+                  color:         'var(--success)',
                   marginBottom:  10,
                   paddingTop:    4,
                 }}>
@@ -1306,8 +1485,8 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
               <div style={{ marginBottom: 28 }}>
                 <div style={{
                   fontSize:      11,
-                  fontWeight:    700,
-                  letterSpacing: '0.1em',
+                  fontWeight:    800,
+                  letterSpacing: '0.16em',
                   color:         'var(--action)',
                   marginBottom:  10,
                 }}>
@@ -1341,9 +1520,9 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
               <div>
                 <div style={{
                   fontSize:       11,
-                  fontWeight:     700,
-                  letterSpacing:  '0.1em',
-                  color:          'var(--text-on-primary-faint)',
+                  fontWeight:     800,
+                  letterSpacing:  '0.16em',
+                  color:          'var(--text-subtle)',
                   marginBottom:   10,
                   display:        'flex',
                   alignItems:     'center',
@@ -1355,9 +1534,9 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
                     style={{
                       fontSize:     10,
                       fontWeight:   600,
-                      color:        'var(--text-on-primary-faint)',
+                      color:        'var(--text-subtle)',
                       background:   'none',
-                      border:       '1px solid var(--border-on-primary)',
+                      border:       '1px solid var(--border)',
                       borderRadius: 4,
                       padding:      '2px 8px',
                       cursor:       'pointer',
@@ -1371,6 +1550,8 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
                     <DuplicateCard
                       key={line.id}
                       line={line}
+                      addSizeStatus={addSizeStatus.get(line.id) ?? 'idle'}
+                      onAddSize={handleAddSize}
                       onForceCreate={handleForceCreate}
                       onDelete={handleDelete}
                     />
@@ -1393,7 +1574,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
                 borderRadius: 8,
                 border:       'none',
                 background:   'var(--primary)',
-                color:        'var(--text-on-primary)',
+                color:        'var(--text)',
                 fontSize:     14,
                 fontWeight:   600,
                 cursor:       'pointer',
@@ -1408,7 +1589,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
                 borderRadius: 8,
                 border:       'none',
                 background:   'none',
-                color:        'var(--text-on-primary-muted)',
+                color:        'var(--text-muted)',
                 fontSize:     13,
                 cursor:       'pointer',
               }}
@@ -1428,7 +1609,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
                 borderRadius: 8,
                 border:       'none',
                 background:   lineCount === 0 ? 'var(--action-disabled)' : 'var(--action)',
-                color:        lineCount === 0 ? 'var(--text-on-primary-faint)' : 'var(--text-on-primary)',
+                color:        lineCount === 0 ? 'var(--text-subtle)' : 'var(--text)',
                 fontSize:     14,
                 fontWeight:   600,
                 cursor:       lineCount === 0 ? 'not-allowed' : 'pointer',
@@ -1443,7 +1624,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
                 borderRadius: 8,
                 border:       'none',
                 background:   'none',
-                color:        'var(--text-on-primary-muted)',
+                color:        'var(--text-muted)',
                 fontSize:     13,
                 cursor:       'pointer',
               }}
@@ -1459,14 +1640,21 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
               onClick={handleCreate}
               disabled={saving || okLines.length === 0}
               style={{
-                height:       44,
-                borderRadius: 8,
-                border:       'none',
-                background:   saving || okLines.length === 0 ? 'var(--action-disabled)' : 'var(--action)',
-                color:        saving || okLines.length === 0 ? 'var(--text-on-primary-faint)' : 'var(--text-on-primary)',
-                fontSize:     14,
-                fontWeight:   600,
-                cursor:       saving ? 'wait' : okLines.length === 0 ? 'not-allowed' : 'pointer',
+                height:        56,
+                borderRadius:  12,
+                border:        'none',
+                background:    'var(--action)',
+                color:         'var(--text)',
+                fontSize:      15,
+                fontWeight:    600,
+                letterSpacing: '0.02em',
+                cursor:        saving ? 'wait' : okLines.length === 0 ? 'not-allowed' : 'pointer',
+                opacity:       (saving || okLines.length === 0) ? 0.7 : 1,
+                // Elevação do save CTA — alinha com `.zesto-save-cta` do
+                // ArticleForm. Inline porque os stops rgba derivados de
+                // --action não existem como tokens (mesma decisão do manual).
+                boxShadow:     '0 6px 16px rgba(196, 106, 45, 0.28), 0 1px 0 rgba(168, 88, 34, 0.6) inset',
+                transition:    'opacity 0.15s, box-shadow 0.18s',
               }}
             >
               {saving ? 'A criar…' : `Criar ${okLines.length} artigo${okLines.length !== 1 ? 's' : ''}`}
@@ -1474,7 +1662,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
             {!saving && ignoredCount > 0 && (
               <p style={{
                 fontSize:  11,
-                color:     'var(--text-on-primary-faint)',
+                color:     'var(--text-subtle)',
                 textAlign: 'center',
                 margin:    0,
               }}>
@@ -1492,7 +1680,7 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
                 borderRadius: 8,
                 border:       'none',
                 background:   'none',
-                color:        'var(--text-on-primary-muted)',
+                color:        'var(--text-muted)',
                 fontSize:     13,
                 cursor:       saving ? 'not-allowed' : 'pointer',
               }}

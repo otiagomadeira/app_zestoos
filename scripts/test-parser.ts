@@ -17,6 +17,7 @@ import { parseProductLines } from '../src/lib/parseProductLines'
 import { parsePackagingQuantity, type ArticleBaseUnit } from '../src/lib/units'
 import { getSuggestedUnitWeight } from '../src/lib/unitWeightSuggestions'
 import { assessConfidence, type ConfidenceLevel, type ConfidenceReason } from '../src/lib/articleConfidence'
+import { resolveArticleInputAction } from '../src/lib/resolveArticleAction'
 
 type Expect = {
   name?:             string
@@ -73,7 +74,7 @@ const CASES: Case[] = [
   { tag: 'REGRESSION', input: 'Rúcula saco 200g',
     expect: { name: 'Rúcula', unit: 'g', orderUnit: 'saco', conversionFactor: 200 } },
   { tag: 'REGRESSION', input: 'Tomate pelado lata 2.5kg',
-    expect: { unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 2500 } },
+    expect: { name: 'Tomate Pelado em Lata', unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 2500 } },
   { tag: 'REGRESSION', input: 'Choco limpo 1kg',
     expect: { name: 'Choco Limpo', unit: 'g', category: 'Peixe e Marisco' } },
   { tag: 'REGRESSION', input: 'Chocolate em pó saco 1kg',
@@ -89,10 +90,15 @@ const CASES: Case[] = [
               multipackCount: 24, multipackPerPack: 330, hint: '24 x 330 mL · caixa' } },
 
   // ── Conserva / enlatado: bug do supplierSeed silenciosamente perdido ───
+  // R-PATCH simétrico: o branch CONTAINER_KEEP agora canonicaliza para
+  // "X em <suffix>" também quando o label vem DEPOIS do produto. As três formas
+  // ("Atum em Conserva" via DICT, "Atum conserva 1kg", "Atum em conserva 1kg")
+  // colapsam na mesma chave canónica — pré-requisito para o duplicate detection
+  // do BulkImportPanel apanhar a variante.
   { tag: 'CRITICAL', input: 'Atum conserva 1kg',
-    expect: { name: 'Atum Conserva', unit: 'g', category: 'Mercearia', orderUnit: 'conserva', conversionFactor: 1000 } },
+    expect: { name: 'Atum em Conserva', unit: 'g', category: 'Mercearia', orderUnit: 'conserva', conversionFactor: 1000 } },
   { tag: 'CRITICAL', input: 'Atum enlatado 1kg',
-    expect: { name: 'Atum Enlatado', unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 1000 } },
+    expect: { name: 'Atum em Lata', unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 1000 } },
   { tag: 'CRITICAL', input: 'Pimentos em conserva frasco 1kg',
     expect: { name: 'Pimentos em Conserva', unit: 'g', category: 'Mercearia', orderUnit: 'frasco', conversionFactor: 1000 } },
 
@@ -105,6 +111,33 @@ const CASES: Case[] = [
     expect: { name: 'Tomate Pelado em Lata', unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 2500 } },
   { tag: 'CRITICAL', input: 'lata 400g tomate triturado',
     expect: { name: 'Tomate Triturado em Lata', unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 400 } },
+
+  // ── R-PATCH: container-keep com label DEPOIS do produto ──────────────────
+  // Bug simétrico ao acima: "tomate pelado lata 2.5kg" produzia
+  // "Tomate Pelado Lata" (label vazava como nome). A canonicalização "em <suffix>"
+  // só disparava quando o label era a ÚNICA palavra de `before`. Fix: quando
+  // o label é a última palavra de `before` (não-só-label), strip + sufixo.
+  // Necessário para que o duplicate detection do BulkImportPanel apanhe a
+  // forma natural "<produto> <embalagem> <peso>" → mesma chave canónica que
+  // "<embalagem> <peso> <produto>".
+  { tag: 'CRITICAL', input: 'tomate pelado lata 2.5kg',
+    expect: { name: 'Tomate Pelado em Lata', unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 2500 } },
+  { tag: 'CRITICAL', input: 'atum lata 1kg',
+    expect: { name: 'Atum em Lata', unit: 'g', category: 'Mercearia', orderUnit: 'lata', conversionFactor: 1000 } },
+
+  // ── Caso "duplicado + tamanho" sem packaging label (variant flow no Bulk) ─
+  // "tomate pelado 2.5kg" sem "lata" — parser não infere embalagem.
+  // O nome canónico colide com "Tomate Pelado" existente; supplierSeed=undefined
+  // mas detected_qty=2500 fica disponível para o BulkImportPanel oferecer
+  // "Adicionar tamanho · 2,5 kg" na DuplicateCard.
+  { tag: 'CRITICAL', input: 'tomate pelado 2.5kg',
+    expect: { name: 'Tomate Pelado', unit: 'g', detectedQty: 2500, orderUnit: null, conversionFactor: null } },
+
+  // ── Regressão: label de embalagem antes do produto sem CONTAINER_KEEP ─────
+  // "frasco 1L azeite" — frasco NÃO está em CONTAINER_KEEP_IN_NAME, então o
+  // branch normal apaga o label e o produto fica em `after`.
+  { tag: 'REGRESSION', input: 'frasco 1L azeite',
+    expect: { name: 'Azeite', unit: 'mL', orderUnit: 'frasco', conversionFactor: 1000 } },
 
   // ── R-PATCH: categoria por word-boundary + priority phrases ─────────────
   // Falsos positivos eliminados: "porto" em "portobello" deixa de cair em
@@ -572,7 +605,7 @@ for (const c of INTENT_DIRECT_CASES) {
 
 // ── getCountingMode: cobertura directa ────────────────────────────────────────
 //
-// Helper consumido pela "Conta em: X" pill no ArticleForm/BulkImportPanel.
+// Helper consumido pelo bloco "Formatos de uso" no ArticleForm/BulkImportPanel.
 // Testa cada ramo do switch + precedência de article_sizes sobre intent.
 
 console.log('\n── getCountingMode (puro) ──')
@@ -674,6 +707,18 @@ const COUNTING_OPTIONS_DIRECT_CASES: Array<{
       articleSizes: [{ label: 'saco', base_per_unit: 5000 }],
     },
     expected: [{ count_unit: 'saco', base_per_unit: 5000, needs_supplier: false }] },
+  { label: 'múltiplos article_sizes → uma chip por size',
+    args: {
+      intent: { kind: 'WEIGHT_LOOSE' },
+      articleSizes: [
+        { label: 'saco',  base_per_unit: 25000 },
+        { label: 'caixa', base_per_unit: 10000 },
+      ],
+    },
+    expected: [
+      { count_unit: 'saco',  base_per_unit: 25000, needs_supplier: false },
+      { count_unit: 'caixa', base_per_unit: 10000, needs_supplier: false },
+    ] },
 ]
 
 for (const c of COUNTING_OPTIONS_DIRECT_CASES) {
@@ -775,6 +820,112 @@ for (const c of PL_CASES) {
     console.log(`  ✗  [PARSED-LINE] ${c.input}`)
     for (const e of errs) console.log(`        ${e}`)
     failures.push(c.input)
+  }
+}
+
+// ── parseProductLines (base fallback dedup) ────────────────────────────────
+//
+// Quando o parser canonicaliza "X em <container>" e a DB só tem o nome base
+// "X", a 2ª passagem da dedup procura sem o sufixo. Match → variante do base
+// em vez de novo artigo, com size derivada de detected_label/qty.
+//
+// CONTAINER_KEEP_IN_NAME (lata/conserva) é o único set elegível — outros
+// containers (frasco, saco, garrafa…) nunca aparecem no canónico do nome,
+// já são order_unit puro.
+
+console.log('\n── parseProductLines (base fallback dedup) ──')
+
+type DedupCase = {
+  label:    string
+  input:    string
+  existing: { id: string; name: string }[]
+  expect:   {
+    isDuplicate:         boolean
+    isBaseFallback:      boolean
+    existingArticleId?:  string
+    existingArticleName?: string
+  }
+}
+
+const DEDUP_CASES: DedupCase[] = [
+  // ── Base fallback hits (P1 do patch) ──
+  { label: 'lata após produto + só base na DB',
+    input: 'tomate pelado lata 2.5kg',
+    existing: [{ id: 'TP', name: 'Tomate Pelado' }],
+    expect: { isDuplicate: true, isBaseFallback: true, existingArticleId: 'TP', existingArticleName: 'Tomate Pelado' } },
+  { label: 'lata antes produto + só base na DB',
+    input: 'lata 2.5kg tomate pelado',
+    existing: [{ id: 'TP', name: 'Tomate Pelado' }],
+    expect: { isDuplicate: true, isBaseFallback: true, existingArticleId: 'TP', existingArticleName: 'Tomate Pelado' } },
+  { label: 'em lata explícito + só base',
+    input: 'tomate pelado em lata 2.5kg',
+    existing: [{ id: 'TP', name: 'Tomate Pelado' }],
+    expect: { isDuplicate: true, isBaseFallback: true, existingArticleId: 'TP', existingArticleName: 'Tomate Pelado' } },
+  { label: 'enlatado canonicaliza para lata',
+    input: 'atum enlatado 1kg',
+    existing: [{ id: 'A', name: 'Atum' }],
+    expect: { isDuplicate: true, isBaseFallback: true, existingArticleId: 'A', existingArticleName: 'Atum' } },
+  { label: 'conserva sufixo',
+    input: 'pimentos em conserva 1kg',
+    existing: [{ id: 'P', name: 'Pimentos' }],
+    expect: { isDuplicate: true, isBaseFallback: true, existingArticleId: 'P', existingArticleName: 'Pimentos' } },
+
+  // ── Exato vence base fallback ──
+  { label: 'ambos na DB → exato wins',
+    input: 'tomate pelado lata 2.5kg',
+    existing: [
+      { id: 'TP',  name: 'Tomate Pelado' },
+      { id: 'TPL', name: 'Tomate Pelado em Lata' },
+    ],
+    expect: { isDuplicate: true, isBaseFallback: false, existingArticleId: 'TPL', existingArticleName: 'Tomate Pelado em Lata' } },
+
+  // ── Não-regressões ──
+  { label: 'exato sem container (já testado em fluxo anterior)',
+    input: 'tomate pelado 2.5kg',
+    existing: [{ id: 'TP', name: 'Tomate Pelado' }],
+    expect: { isDuplicate: true, isBaseFallback: false, existingArticleId: 'TP', existingArticleName: 'Tomate Pelado' } },
+  { label: 'sem container word + sem match → NOVO',
+    input: 'frango 10kg',
+    existing: [{ id: 'TP', name: 'Tomate Pelado' }],
+    expect: { isDuplicate: false, isBaseFallback: false, existingArticleId: undefined, existingArticleName: undefined } },
+  { label: 'container word mas DB vazia → NOVO',
+    input: 'tomate pelado lata 2.5kg',
+    existing: [],
+    expect: { isDuplicate: false, isBaseFallback: false, existingArticleId: undefined, existingArticleName: undefined } },
+  { label: 'frasco NÃO faz fallback (não está em CONTAINER_KEEP)',
+    input: 'mel frasco 1kg',
+    existing: [{ id: 'M', name: 'Mel' }],
+    expect: { isDuplicate: true, isBaseFallback: false, existingArticleId: 'M', existingArticleName: 'Mel' } },
+]
+
+for (const c of DEDUP_CASES) {
+  const lines = parseProductLines(c.input, c.existing)
+  const errs: string[] = []
+  if (lines.length !== 1) {
+    errs.push(`esperado 1 linha, obteve ${lines.length}`)
+  } else {
+    const l = lines[0] as typeof lines[0] & { isBaseFallback?: boolean; existingArticleName?: string }
+    if (l.isDuplicate !== c.expect.isDuplicate) {
+      errs.push(`isDuplicate: esperado ${c.expect.isDuplicate} obteve ${l.isDuplicate}`)
+    }
+    if (Boolean(l.isBaseFallback) !== c.expect.isBaseFallback) {
+      errs.push(`isBaseFallback: esperado ${c.expect.isBaseFallback} obteve ${Boolean(l.isBaseFallback)}`)
+    }
+    if (l.existingArticleId !== c.expect.existingArticleId) {
+      errs.push(`existingArticleId: esperado ${c.expect.existingArticleId ?? 'undef'} obteve ${l.existingArticleId ?? 'undef'}`)
+    }
+    if ((l.existingArticleName ?? undefined) !== c.expect.existingArticleName) {
+      errs.push(`existingArticleName: esperado ${c.expect.existingArticleName ?? 'undef'} obteve ${l.existingArticleName ?? 'undef'}`)
+    }
+  }
+  if (errs.length === 0) {
+    pass++
+    console.log(`  ✓  [DEDUP-FB] ${c.label}`)
+  } else {
+    fail++
+    console.log(`  ✗  [DEDUP-FB] ${c.label}`)
+    for (const e of errs) console.log(`        ${e}`)
+    failures.push(c.label)
   }
 }
 
@@ -1095,6 +1246,125 @@ for (const c of DEDUP_PAIRS) {
     console.log(`  ✗  [DEDUP] ${c.label}`)
     console.log(`        ambos colapsaram em key="${da.normalizedKey}"`)
     console.log(`        a.name="${da.name}" b.name="${db.name}"`)
+    failures.push(c.label)
+  }
+}
+
+// ── resolveArticleInputAction ──────────────────────────────────────────────
+//
+// Função única partilhada entre ArticleForm (manual) e BulkImportPanel.
+// Cobre os 3 ramos: create_article (sem match), add_size (match + qty útil),
+// duplicate_only (match sem qty útil). Foco nos casos do bug original e
+// regra de produto declarada pelo chef.
+
+console.log('\n── resolveArticleInputAction (puro) ──')
+
+type ResolveCase = {
+  label:    string
+  input:    string
+  existing: { id: string; name: string }[]
+  expect: {
+    kind:                 'create_article' | 'add_size' | 'duplicate_only'
+    existingArticleId?:   string
+    existingArticleName?: string
+    isBaseFallback?:      boolean
+    sizeLabel?:           string
+    basePerUnit?:         number
+  }
+}
+
+const RESOLVE_CASES: ResolveCase[] = [
+  // ── A) create_article ──
+  { label: 'sem match → create_article',
+    input: 'frango fresco', existing: [{ id: 'TP', name: 'Tomate Pelado' }],
+    expect: { kind: 'create_article' } },
+  { label: 'sem nome → create_article (defensivo)',
+    input: '   ', existing: [],
+    expect: { kind: 'create_article' } },
+
+  // ── B) add_size — caso do bug reportado ──
+  { label: 'Açúcar Branco 25kg → add_size 25 kg',
+    input: 'Açúcar Branco 25kg', existing: [{ id: 'AB', name: 'Açúcar Branco' }],
+    expect: { kind: 'add_size', existingArticleId: 'AB', existingArticleName: 'Açúcar Branco', isBaseFallback: false, sizeLabel: '25 kg', basePerUnit: 25000 } },
+
+  // ── B) add_size — outros obrigatórios ──
+  { label: 'Tomate Pelado 2.5kg → add_size 2,5 kg',
+    input: 'Tomate Pelado 2.5kg', existing: [{ id: 'TP', name: 'Tomate Pelado' }],
+    expect: { kind: 'add_size', existingArticleId: 'TP', existingArticleName: 'Tomate Pelado', isBaseFallback: false, sizeLabel: '2,5 kg', basePerUnit: 2500 } },
+  { label: 'Tomate Pelado lata 2.5kg + só base → add_size lata 2,5 kg (base fallback)',
+    input: 'Tomate Pelado lata 2.5kg', existing: [{ id: 'TP', name: 'Tomate Pelado' }],
+    expect: { kind: 'add_size', existingArticleId: 'TP', existingArticleName: 'Tomate Pelado', isBaseFallback: true, sizeLabel: 'lata 2,5 kg', basePerUnit: 2500 } },
+  { label: 'Leite 1L → add_size 1 L',
+    input: 'Leite 1L', existing: [{ id: 'L', name: 'Leite' }],
+    expect: { kind: 'add_size', existingArticleId: 'L', existingArticleName: 'Leite', isBaseFallback: false, sizeLabel: '1 L', basePerUnit: 1000 } },
+  { label: 'Ovos caixa 180 uni → add_size caixa 180 un',
+    input: 'Ovos caixa 180 uni', existing: [{ id: 'O', name: 'Ovos' }],
+    expect: { kind: 'add_size', existingArticleId: 'O', existingArticleName: 'Ovos', isBaseFallback: false, sizeLabel: 'caixa 180 un', basePerUnit: 180 } },
+  { label: 'Arroz Carolino saco 20kg → add_size saco 20 kg',
+    input: 'Arroz Carolino saco 20kg', existing: [{ id: 'AC', name: 'Arroz Carolino' }],
+    expect: { kind: 'add_size', existingArticleId: 'AC', existingArticleName: 'Arroz Carolino', isBaseFallback: false, sizeLabel: 'saco 20 kg', basePerUnit: 20000 } },
+  { label: 'Frango 10kg + Frango → add_size 10 kg (default kg label aceite)',
+    input: 'Frango 10kg', existing: [{ id: 'F', name: 'Frango' }],
+    expect: { kind: 'add_size', existingArticleId: 'F', existingArticleName: 'Frango', isBaseFallback: false, sizeLabel: '10 kg', basePerUnit: 10000 } },
+
+  // ── B) add_size — exato vence base fallback ──
+  { label: 'Tomate Pelado lata 2.5kg + ambos → exato wins (TPL)',
+    input: 'Tomate Pelado lata 2.5kg',
+    existing: [
+      { id: 'TP',  name: 'Tomate Pelado' },
+      { id: 'TPL', name: 'Tomate Pelado em Lata' },
+    ],
+    expect: { kind: 'add_size', existingArticleId: 'TPL', existingArticleName: 'Tomate Pelado em Lata', isBaseFallback: false, sizeLabel: 'lata 2,5 kg', basePerUnit: 2500 } },
+
+  // ── C) duplicate_only — match sem qty útil ──
+  { label: 'Açúcar Branco (sem qty) → duplicate_only',
+    input: 'Açúcar Branco', existing: [{ id: 'AB', name: 'Açúcar Branco' }],
+    expect: { kind: 'duplicate_only', existingArticleId: 'AB', existingArticleName: 'Açúcar Branco', isBaseFallback: false } },
+  { label: 'Tomate Pelado (sem qty) → duplicate_only',
+    input: 'Tomate Pelado', existing: [{ id: 'TP', name: 'Tomate Pelado' }],
+    expect: { kind: 'duplicate_only', existingArticleId: 'TP', existingArticleName: 'Tomate Pelado', isBaseFallback: false } },
+]
+
+for (const c of RESOLVE_CASES) {
+  const action = resolveArticleInputAction({ input: c.input, existingArticles: c.existing })
+  const errs: string[] = []
+
+  if (action.kind !== c.expect.kind) {
+    errs.push(`kind: esperado "${c.expect.kind}" obteve "${action.kind}"`)
+  }
+  if (c.expect.existingArticleId !== undefined && action.kind !== 'create_article') {
+    if (action.existingArticleId !== c.expect.existingArticleId) {
+      errs.push(`existingArticleId: esperado "${c.expect.existingArticleId}" obteve "${action.existingArticleId}"`)
+    }
+  }
+  if (c.expect.existingArticleName !== undefined && action.kind !== 'create_article') {
+    if (action.existingArticleName !== c.expect.existingArticleName) {
+      errs.push(`existingArticleName: esperado "${c.expect.existingArticleName}" obteve "${action.existingArticleName}"`)
+    }
+  }
+  if (c.expect.isBaseFallback !== undefined && action.kind !== 'create_article') {
+    if (action.isBaseFallback !== c.expect.isBaseFallback) {
+      errs.push(`isBaseFallback: esperado ${c.expect.isBaseFallback} obteve ${action.isBaseFallback}`)
+    }
+  }
+  if (c.expect.sizeLabel !== undefined) {
+    if (action.kind !== 'add_size' || action.sizeLabel !== c.expect.sizeLabel) {
+      errs.push(`sizeLabel: esperado "${c.expect.sizeLabel}" obteve "${action.kind === 'add_size' ? action.sizeLabel : '(N/A)'}"`)
+    }
+  }
+  if (c.expect.basePerUnit !== undefined) {
+    if (action.kind !== 'add_size' || action.basePerUnit !== c.expect.basePerUnit) {
+      errs.push(`basePerUnit: esperado ${c.expect.basePerUnit} obteve ${action.kind === 'add_size' ? action.basePerUnit : '(N/A)'}`)
+    }
+  }
+
+  if (errs.length === 0) {
+    pass++
+    console.log(`  ✓  [RESOLVE] ${c.label}`)
+  } else {
+    fail++
+    console.log(`  ✗  [RESOLVE] ${c.label}`)
+    for (const e of errs) console.log(`        ${e}`)
     failures.push(c.label)
   }
 }

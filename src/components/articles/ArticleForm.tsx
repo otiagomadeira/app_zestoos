@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import type { Article, ArticleSize, Supplier } from '@/types/database'
 import {
   createArticle, updateArticle, toggleArticleActive,
@@ -19,6 +19,7 @@ import { buildArticleDraft, formatDraftHint, getCountingModeOptions, inferIntent
 import { CONFIDENCE_REASON_LABELS } from '@/lib/articleConfidence'
 import { getSuggestedUnitWeight } from '@/lib/unitWeightSuggestions'
 import { useOrgAliases } from '@/hooks/useOrgAliases'
+import { resolveArticleInputAction } from '@/lib/resolveArticleAction'
 
 interface Props {
   existing?:  Article
@@ -287,6 +288,56 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
   const [confidenceDismissed, setConfidenceDismissed] = useState(false)
 
   const { aliases, learnAlias } = useOrgAliases()
+
+  // ── Decisão única de input → action (partilhada com BulkImportPanel) ──────
+  // Em criação, recompute a cada keystroke o que o chef está a fazer:
+  //   create_article    → novo artigo (caminho normal)
+  //   add_size          → tamanho de artigo existente (painel compacto)
+  //   duplicate_only    → artigo existe sem tamanho útil (CTA bloqueada)
+  //
+  // forcedExistingId é o escape: quando o chef clica "Criar artigo separado",
+  // guardamos o existingArticleId que ele decidiu ignorar. Se mudar o nome
+  // para algo que mata aquele match, o flag desactiva-se naturalmente.
+  // Em edição (isEdit) saltamos a deteção — o chef está a editar este artigo
+  // e o nome pode legitimamente colidir com a forma actual.
+  const [forcedExistingId, setForcedExistingId] = useState<string | null>(null)
+  const [addSizeStatus,    setAddSizeStatus]    = useState<'idle' | 'adding' | 'added' | 'exists' | 'error'>('idle')
+
+  const inputAction = useMemo(() => {
+    if (isEdit) return null
+    if (!name.trim()) return null
+    return resolveArticleInputAction({ input: name, existingArticles: articles ?? [], aliases })
+  }, [name, articles, aliases, isEdit])
+
+  const isForcing       = !!inputAction && inputAction.kind !== 'create_article'
+                         && 'existingArticleId' in inputAction
+                         && forcedExistingId === inputAction.existingArticleId
+  const inAddSizeMode   = inputAction?.kind === 'add_size'   && !isForcing
+  const inDuplicateOnly = inputAction?.kind === 'duplicate_only' && !isForcing
+
+  // Reset do feedback de add_size quando o existingArticleId muda — chef
+  // mudou o nome para outro match, o estado anterior ('exists'/'added') já
+  // não se aplica. Extraído para variável (não inline no dep array) por causa
+  // do react-hooks/exhaustive-deps que rejeita expressões complexas.
+  const addSizeMatchKey = inputAction?.kind === 'add_size'
+    ? inputAction.existingArticleId
+    : null
+  useEffect(() => {
+    setAddSizeStatus('idle')
+  }, [addSizeMatchKey])
+
+  // ── Form inline "+ formato" (edit mode) ────────────────────────────────────
+  // Caminho explícito para o chef adicionar um article_size novo sem precisar
+  // de re-escrever o nome com a quantidade (que é o caminho do add_size em
+  // criação). Persiste via createArticleSizeIfMissing — não toca em supplier.
+  // Estado fora do showAddSize para preservar valores entre toggles.
+  const [showAddSize,    setShowAddSize]    = useState(false)
+  const [newSizeLabel,   setNewSizeLabel]   = useState('')
+  const [newSizeQty,     setNewSizeQty]     = useState('')
+  const [newSizeUnit,    setNewSizeUnit]    = useState<string>('')
+  const [addingSize,     setAddingSize]     = useState(false)
+  const [addSizeMessage, setAddSizeMessage] = useState<{ kind: 'error' | 'exists' | 'added', text: string } | null>(null)
+
   const rawNameRef              = useRef(existing?.name ?? '')
   const nameChangedAfterBlurRef = useRef(false)
   const parsedSeedRef           = useRef<ArticleDraft | null>(null)
@@ -372,6 +423,16 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
 
   const handleNameBlur = () => {
     if (!name.trim()) return
+
+    // Em modo "Adicionar tamanho", preservar o input completo
+    // ("Açúcar Branco 25kg") em vez de normalizar para "Açúcar Branco".
+    // Sem este guard, o blur disparado ao clicar no CTA "Adicionar tamanho"
+    // strippa o "25kg" do nome → inputAction recomputa para duplicate_only
+    // no próximo render → o painel compacto desaparece e o chef vê o form
+    // completo a meio do save, mesmo que createArticleSizeIfMissing corra.
+    // Em isForcing (chef escolheu criar separado), a normalização normal de
+    // handleSave trata o nome — não é preciso normalizar aqui.
+    if (inputAction?.kind === 'add_size' && !isForcing) return
 
     // Pipeline única — normaliza nome, infere unidade e categoria
     const normalized = normalizeArticleInput(name, aliases)
@@ -489,7 +550,133 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
     })
   }
 
+  // Adicionar tamanho a artigo existente: ramo do save quando inputAction
+  // resolve para 'add_size'. Chama createArticleSizeIfMissing (que faz upsert
+  // com ON CONFLICT DO NOTHING) e usa o discriminador `created` para
+  // distinguir "tamanho adicionado" de "tamanho já existe". Não cria artigo,
+  // não toca em fornecedores, não chama maybeLearnAlias — o nome canónico
+  // está implicitamente confirmado pela DB existente.
+  const handleAddSize = async () => {
+    if (!inputAction || inputAction.kind !== 'add_size') return
+    setAddSizeStatus('adding')
+    setError(null)
+    try {
+      const { created } = await createArticleSizeIfMissing(
+        inputAction.existingArticleId,
+        inputAction.sizeLabel,
+        inputAction.basePerUnit,
+      )
+      if (created) {
+        setAddSizeStatus('added')
+        // Devolver o artigo existente ao parent para que a UI feche o form e
+        // (potencialmente) abra o detalhe do artigo modificado.
+        const found = (articles ?? []).find(a => a.id === inputAction.existingArticleId)
+        if (found) {
+          setIsDirty(false)
+          // Pequeno delay para o chef ver o estado verde antes de navegar.
+          setTimeout(() => onSaved(found), 600)
+        }
+      } else {
+        setAddSizeStatus('exists')
+      }
+    } catch (e: unknown) {
+      setAddSizeStatus('error')
+      setError((e as Error).message ?? 'Erro ao adicionar tamanho')
+    }
+  }
+
+  // Unidades válidas para o tamanho a adicionar — restritas à família da base
+  // unit do artigo. Evita INCOMPATIBLE_UNIT no parsePackagingQuantity e remove
+  // ruído no dropdown (g·mL não fazem sentido juntos).
+  const compatibleSizeUnits: readonly string[] =
+    unit === 'g'  ? ['kg', 'g']
+  : unit === 'mL' ? ['L', 'mL']
+                  : ['un']
+  const defaultSizeUnit = compatibleSizeUnits[0]
+
+  // Adicionar formato a partir do form inline (edit mode). Persiste via
+  // createArticleSizeIfMissing e re-fetcha articleSizes para reflectir o novo
+  // chip. Não chama updateArticle, não toca em links/suppliers, não muda
+  // isDirty (o save do artigo é independente — fechar sem Save mantém o
+  // formato porque já está em DB).
+  const handleAddNewSize = async () => {
+    if (!existing) return
+    setAddSizeMessage(null)
+
+    const labelClean = newSizeLabel.trim().toLowerCase()
+    if (!labelClean) {
+      setAddSizeMessage({ kind: 'error', text: 'Indica o nome do formato' })
+      return
+    }
+    // Labels reservados: nomes de unidades puras colidem com o filtro de
+    // não-mostrar-detalhe das chips (count_unit ∈ {kg,L,un} esconde "· N kg").
+    // Resultado seria UI confusa: chip "kg" sozinho sem revelar a quantidade.
+    // Forçar um nome real de formato (caixa/saco/lata) garante chip legível.
+    const RESERVED_LABELS = new Set(['g', 'kg', 'ml', 'l', 'un'])
+    if (RESERVED_LABELS.has(labelClean)) {
+      setAddSizeMessage({
+        kind: 'error',
+        text: 'Usa um nome de formato, como caixa, saco ou lata.',
+      })
+      return
+    }
+    const qtyTrim = newSizeQty.trim()
+    if (!qtyTrim) {
+      setAddSizeMessage({ kind: 'error', text: 'Indica a quantidade' })
+      return
+    }
+    // parsePackagingQuantity já trata vírgula PT, conversão (kg→g, L→mL) e
+    // valida contra a base unit do artigo.
+    const parsed = parsePackagingQuantity(`${qtyTrim}${newSizeUnit}`, unit)
+    if (!parsed.ok) {
+      setAddSizeMessage({
+        kind: 'error',
+        text: parsed.reason === 'INCOMPATIBLE_UNIT'
+          ? `Unidade não compatível com ${unit}`
+          : 'Quantidade inválida',
+      })
+      return
+    }
+
+    setAddingSize(true)
+    try {
+      const { created } = await createArticleSizeIfMissing(
+        existing.id, labelClean, parsed.value,
+      )
+      if (created) {
+        const fresh = await fetchArticleSizes(existing.id)
+        setArticleSizes(fresh)
+        setAddSizeMessage({ kind: 'added', text: '✓ Formato adicionado' })
+        setNewSizeLabel('')
+        setNewSizeQty('')
+        // Pequeno delay para o chef ver o estado verde antes de fechar o form.
+        setTimeout(() => {
+          setShowAddSize(false)
+          setAddSizeMessage(null)
+        }, 600)
+      } else {
+        setAddSizeMessage({ kind: 'exists', text: 'Formato já existe' })
+      }
+    } catch (e: unknown) {
+      setAddSizeMessage({ kind: 'error', text: (e as Error).message ?? 'Erro ao guardar formato' })
+    } finally {
+      setAddingSize(false)
+    }
+  }
+
   const handleSave = async () => {
+    // Branch para o fluxo "tamanho de artigo existente" — substitui o save
+    // normal quando inputAction === 'add_size' E o chef não forçou criar
+    // separado. Sem este guard, o Enter no input de nome cairia em
+    // createArticle e a DB rejeitaria por unique-name (ou pior, criaria
+    // duplicado se a constraint não existir).
+    if (inAddSizeMode) return handleAddSize()
+    if (inDuplicateOnly) {
+      // CTA principal está bloqueada. Se o chef chegou aqui via Enter no
+      // name input, mostrar mensagem clara em vez de criar duplicado.
+      return setError('Já existe um artigo com este nome. Usa "Criar mesmo assim" para forçar.')
+    }
+
     if (!name.trim()) return setError('Nome é obrigatório')
     const par = parseFloat(parLevel)
     if (isNaN(par) || par < 0) return setError('Stock mínimo inválido')
@@ -734,10 +921,27 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           letterSpacing: '-0.01em',
           margin:        0,
           lineHeight:    1.2,
+          minWidth:      0,
+          overflow:      'hidden',
+          textOverflow:  'ellipsis',
+          whiteSpace:    'nowrap',
         }}>
-          {isEdit ? 'Editar' : 'Novo'}
-          <span style={{ color: 'var(--text-subtle)', margin: '0 8px', fontWeight: 400 }}>·</span>
-          Artigo
+          {/* Título reactivo à decisão do input:
+              - inAddSizeMode → "Tamanho · {nome do artigo existente}"
+              - duplicate só / criar / editar → comportamento anterior */}
+          {inAddSizeMode && inputAction?.kind === 'add_size' ? (
+            <>
+              Tamanho
+              <span style={{ color: 'var(--text-subtle)', margin: '0 8px', fontWeight: 400 }}>·</span>
+              <span style={{ color: 'var(--text)' }}>{inputAction.existingArticleName}</span>
+            </>
+          ) : (
+            <>
+              {isEdit ? 'Editar' : 'Novo'}
+              <span style={{ color: 'var(--text-subtle)', margin: '0 8px', fontWeight: 400 }}>·</span>
+              Artigo
+            </>
+          )}
         </h1>
       </div>
 
@@ -927,6 +1131,87 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           )}
         </div>
 
+        {/* Painel compacto "Tamanho de artigo existente".
+            Substitui o resto do form quando inputAction === 'add_size'.
+            O chef pode sair via "Criar artigo separado" no footer (set
+            forcedExistingId), o que volta a render o form completo. */}
+        {inAddSizeMode && inputAction?.kind === 'add_size' && (
+          <div style={{
+            padding:        '14px 16px',
+            background:     'var(--surface)',
+            border:         '1px solid var(--border)',
+            borderRadius:   12,
+            display:        'flex',
+            flexDirection:  'column',
+            gap:            8,
+          }}>
+            <div style={{
+              fontSize:      10,
+              fontWeight:    700,
+              color:         'var(--text-muted)',
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+            }}>
+              Tamanho a adicionar
+            </div>
+            <div style={{
+              fontSize:      20,
+              fontFamily:    "'JetBrains Mono', monospace",
+              fontWeight:    700,
+              color:         'var(--text)',
+              letterSpacing: '-0.01em',
+            }}>
+              {inputAction.sizeLabel}
+            </div>
+            <p style={{
+              fontSize:   13,
+              color:      'var(--text-muted)',
+              margin:     0,
+              lineHeight: 1.5,
+            }}>
+              Vai adicionar este tamanho ao artigo{' '}
+              <strong style={{ color: 'var(--text)' }}>{inputAction.existingArticleName}</strong>
+              . Não cria artigo novo.
+            </p>
+            {inputAction.isBaseFallback && (
+              <p style={{
+                fontSize:   11,
+                color:      'var(--text-subtle)',
+                fontStyle:  'italic',
+                margin:     0,
+              }}>
+                Escrito como “{name.trim()}”.
+              </p>
+            )}
+            {addSizeStatus === 'exists' && (
+              <p style={{
+                fontSize:   12,
+                color:      'var(--warning)',
+                margin:     '6px 0 0',
+                fontWeight: 600,
+              }}>
+                Tamanho já existe
+              </p>
+            )}
+            {addSizeStatus === 'added' && (
+              <p style={{
+                fontSize:   12,
+                color:      'var(--success)',
+                margin:     '6px 0 0',
+                fontWeight: 600,
+              }}>
+                ✓ Tamanho adicionado
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Resto do form: gate por !inAddSizeMode. No fluxo "tamanho de
+            artigo existente" só queremos: nome (acima) + painel compacto +
+            CTA. Nem categoria, nem unidade, nem par_level, nem fornecedores
+            — esses campos pertencem ao artigo existente, não a este input. */}
+        {!inAddSizeMode && <>
+
         {/* Categoria — chips em scroll horizontal (mesmo pattern dos
             filtros da lista: familiar, compacto, mobile-first). Custom
             categoria é um toggle discreto que só aparece quando preciso —
@@ -946,24 +1231,29 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           }}
         />
 
-        {/* CONTA EM — pill(s) derivadas de getCountingModeOptions. Substitui
-            os chips g|mL|un que expunham unidade base ao chef. Quando há mais
-            do que uma opção (multipack: pack vs unidade individual), aparecem
-            chips selecionáveis em vez de pill passiva. Toggle preserva
-            par_level em base_unit (recalcula só o display). */}
+        {/* FORMATOS DE USO — pill(s) derivadas de getCountingModeOptions.
+            Substitui os chips g|mL|un que expunham unidade base ao chef.
+            Mostra como o artigo aparece no trabalho diário (caixa · 5 kg, kg,
+            un). Quando há mais do que uma opção (multipack: pack vs unidade
+            individual), aparecem chips selecionáveis em vez de pill passiva.
+            Toggle preserva par_level em base_unit (recalcula só o display). */}
         {(existing || parsedHint || articleSizes.length > 0) && (
           <div>
-            <label style={labelStyle}>CONTA EM</label>
+            <label style={labelStyle}>FORMATOS DE USO</label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {countingOptions.map((opt, idx) => {
                 const isSelected = idx === safeIdx
                 const isToggle   = countingOptions.length > 1
+                // Detail = quantidade base do formato. Só mostra quando há
+                // packaging real (base_per_unit ≠ 1) e o label não é uma
+                // unidade base directa (kg/L/un — onde "kg · 1 kg" seria
+                // ruído). Render: `caixa · 5 kg` (middot inline no JSX).
                 const detail     =
                   opt.base_per_unit !== 1
                   && opt.count_unit !== 'kg'
                   && opt.count_unit !== 'L'
                   && opt.count_unit !== 'un'
-                    ? `(${formatBaseQty(opt.base_per_unit, unit)})`
+                    ? formatBaseQty(opt.base_per_unit, unit)
                     : null
                 const onSelect = () => {
                   if (!isToggle || isSelected) return
@@ -1021,13 +1311,225 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                         color:      showActive ? 'var(--text-on-primary)' : 'var(--text-muted)',
                         opacity:    showActive ? 0.85 : 1,
                       }}>
-                        {detail}
+                        · {detail}
                       </span>
                     )}
                   </button>
                 )
               })}
+              {/* Trigger "+ formato" — só em edit (artigo já existe em DB).
+                  Estilo dashed para sinalizar "adicionar" sem competir com a
+                  cor de --action das chips selecionáveis. minHeight via
+                  --touch-min: este é CTA novo e tem de respeitar o tap target
+                  de 44px (chips passivos atuais ficam em 40 — não tocados). */}
+              {isEdit && !showAddSize && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddSize(true)
+                    setAddSizeMessage(null)
+                    if (!newSizeUnit) setNewSizeUnit(defaultSizeUnit)
+                  }}
+                  style={{
+                    display:       'inline-flex',
+                    alignItems:    'center',
+                    gap:           6,
+                    padding:       '0 14px',
+                    minHeight:     'var(--touch-min)',
+                    borderRadius:  10,
+                    cursor:        'pointer',
+                    background:    'transparent',
+                    border:        '1px dashed var(--border)',
+                    color:         'var(--text-muted)',
+                    fontFamily:    'inherit',
+                    fontSize:      13,
+                    fontWeight:    600,
+                  }}
+                >
+                  + formato
+                </button>
+              )}
             </div>
+            {/* Form inline para adicionar novo article_size. Aparece quando o
+                chef clica "+ formato". Persiste isoladamente (sem depender do
+                Save do artigo). Só em edit — em criação ainda não há
+                article_id para anexar o size. */}
+            {isEdit && showAddSize && (
+              <div style={{
+                marginTop:     8,
+                padding:       '14px 16px',
+                background:    'var(--surface)',
+                border:        '1px solid var(--border)',
+                borderRadius:  12,
+                display:       'flex',
+                flexDirection: 'column',
+                gap:           12,
+              }}>
+                {/* Formato (label) */}
+                <div>
+                  <label style={labelStyle}>FORMATO</label>
+                  <input
+                    value={newSizeLabel}
+                    onChange={e => {
+                      setNewSizeLabel(e.target.value)
+                      if (addSizeMessage) setAddSizeMessage(null)
+                    }}
+                    placeholder="caixa, saco, lata…"
+                    autoFocus
+                    style={inputStyle}
+                  />
+                </div>
+                {/* Cada formato traz: qty + unit */}
+                <div>
+                  <label style={labelStyle}>CADA FORMATO TRAZ</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={newSizeQty}
+                      onChange={e => {
+                        setNewSizeQty(e.target.value)
+                        if (addSizeMessage) setAddSizeMessage(null)
+                      }}
+                      placeholder="5"
+                      style={{
+                        ...inputStyle,
+                        flex:       1,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontWeight: 700,
+                      }}
+                    />
+                    {compatibleSizeUnits.length > 1 ? (
+                      <select
+                        value={newSizeUnit || defaultSizeUnit}
+                        onChange={e => {
+                          setNewSizeUnit(e.target.value)
+                          if (addSizeMessage) setAddSizeMessage(null)
+                        }}
+                        style={{
+                          ...inputStyle,
+                          width:      90,
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontWeight: 700,
+                          cursor:     'pointer',
+                        }}
+                      >
+                        {compatibleSizeUnits.map(u => (
+                          <option key={u} value={u}>{u}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span style={{
+                        display:        'inline-flex',
+                        alignItems:     'center',
+                        justifyContent: 'center',
+                        width:          90,
+                        height:         48,
+                        background:     'var(--surface-2)',
+                        border:         '1px solid var(--border)',
+                        borderRadius:   8,
+                        fontFamily:     "'JetBrains Mono', monospace",
+                        fontWeight:     700,
+                        fontSize:       15,
+                        color:          'var(--text)',
+                      }}>
+                        {compatibleSizeUnits[0]}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {/* Microcopy: posiciona o article_size como base útil que pode
+                    depois ligar-se a fornecedor (sem prometer feature ainda). */}
+                <p style={{
+                  fontSize:   11,
+                  color:      'var(--text-muted)',
+                  margin:     0,
+                  lineHeight: 1.4,
+                }}>
+                  Serve para inventário e para preencher fornecedores depois.
+                </p>
+                {/* Mensagens (error / exists / added) — uma única linha
+                    discriminada por kind para evitar três blocos quase
+                    idênticos. */}
+                {addSizeMessage && (
+                  <p style={{
+                    fontSize:   12,
+                    fontWeight: 600,
+                    margin:     0,
+                    color:      addSizeMessage.kind === 'error'  ? 'var(--error)'
+                              : addSizeMessage.kind === 'exists' ? 'var(--warning)'
+                                                                 : 'var(--success)',
+                  }}>
+                    {addSizeMessage.text}
+                  </p>
+                )}
+                {/* Botões — Guardar (action) + Cancelar (neutro). Touch ≥44px. */}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={handleAddNewSize}
+                    disabled={addingSize}
+                    style={{
+                      flex:         1,
+                      height:       44,
+                      borderRadius: 10,
+                      border:       'none',
+                      background:   'var(--action)',
+                      color:        'var(--text-on-primary)',
+                      fontFamily:   'inherit',
+                      fontSize:     14,
+                      fontWeight:   700,
+                      cursor:       addingSize ? 'wait' : 'pointer',
+                      opacity:      addingSize ? 0.7 : 1,
+                    }}
+                  >
+                    {addingSize ? 'A guardar…' : 'Guardar formato'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddSize(false)
+                      setAddSizeMessage(null)
+                    }}
+                    disabled={addingSize}
+                    style={{
+                      height:       44,
+                      padding:      '0 16px',
+                      borderRadius: 10,
+                      border:       '1px solid var(--border)',
+                      background:   'transparent',
+                      color:        'var(--text-muted)',
+                      fontFamily:   'inherit',
+                      fontSize:     14,
+                      fontWeight:   600,
+                      cursor:       addingSize ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+            {/* Microcopy explicativa quando há article_sizes guardados mas o
+                chef ainda não associou fornecedor real. Sem isto, o bloco
+                Fornecedores parece vazio "por engano" e o chef pensa que
+                perdeu o formato que escreveu (ex: "Morangos caixa 5kg").
+                Condições:
+                  - isEdit: só após save (em criação ainda não há nada
+                    persistido para explicar)
+                  - articleSizes.length > 0: há formato guardado
+                  - sem supplier real: nenhum link com supplier_id selecionado
+                Não duplica a pill — apenas dá contexto. */}
+            {isEdit && articleSizes.length > 0 && !links.some(l => l.supplier_id) && (
+              <p style={{
+                fontSize:   11,
+                color:      'var(--text-muted)',
+                marginTop:  6,
+                lineHeight: 1.4,
+              }}>
+                Formato guardado para inventário. Podes associar fornecedor depois.
+              </p>
+            )}
           </div>
         )}
 
@@ -1503,6 +2005,8 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
           </div>
         )}
 
+        </>}{/* fim do gate !inAddSizeMode */}
+
         {error && (
           <div style={{ background: 'var(--error-surface)', border: `1px solid var(--error-border)`, borderRadius: 8, padding: '10px 14px', color: 'var(--error)', fontSize: 13 }}>
             {error}
@@ -1511,34 +2015,135 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
       </div>
 
       {/* Footer floating — sombra subtle em cima em vez de border duro,
-          dá profundidade de toolbar elevada sem ruído visual. */}
+          dá profundidade de toolbar elevada sem ruído visual.
+          CTA muda conforme inputAction:
+            add_size       → "Adicionar tamanho · {hint}" + escape
+            duplicate_only → "Artigo já existe" desactivado + override
+            create / edit  → "Guardar Artigo" / "Guardar Alterações"
+       */}
       <div style={{
         padding:    '14px 28px 22px',
         background: 'var(--bg)',
         boxShadow:  '0 -10px 20px -12px rgba(28, 20, 10, 0.08)',
         flexShrink: 0,
+        display:    'flex',
+        flexDirection: 'column',
+        gap:        8,
       }}>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="zesto-save-cta"
-          style={{
-            width:         '100%',
-            height:        56,
-            borderRadius:  12,
-            border:        'none',
-            background:    'var(--action)',
-            color:         'var(--text-on-primary)',
-            fontSize:      15,
-            fontWeight:    600,
-            letterSpacing: '0.02em',
-            cursor:        saving ? 'default' : 'pointer',
-            opacity:       saving ? 0.7 : 1,
-            transition:    'background 0.18s, transform 0.18s, box-shadow 0.18s, opacity 0.15s',
-          }}
-        >
-          {saving ? 'A guardar…' : isEdit ? 'Guardar Alterações' : 'Guardar Artigo'}
-        </button>
+        {inAddSizeMode && inputAction?.kind === 'add_size' ? (
+          <>
+            <button
+              type="button"
+              onClick={handleAddSize}
+              disabled={addSizeStatus === 'adding' || addSizeStatus === 'added' || addSizeStatus === 'exists'}
+              className="zesto-save-cta"
+              style={{
+                width:         '100%',
+                height:        56,
+                borderRadius:  12,
+                border:        'none',
+                background:    'var(--action)',
+                color:         'var(--text-on-primary)',
+                fontSize:      15,
+                fontWeight:    600,
+                letterSpacing: '0.02em',
+                cursor:        addSizeStatus === 'adding' ? 'wait'
+                              : addSizeStatus === 'added' || addSizeStatus === 'exists' ? 'not-allowed'
+                              : 'pointer',
+                opacity:       (addSizeStatus === 'adding' || addSizeStatus === 'added' || addSizeStatus === 'exists') ? 0.7 : 1,
+                transition:    'background 0.18s, transform 0.18s, box-shadow 0.18s, opacity 0.15s',
+              }}
+            >
+              {addSizeStatus === 'adding' ? 'A adicionar…'
+               : addSizeStatus === 'added' ? '✓ Tamanho adicionado'
+               : addSizeStatus === 'exists' ? 'Tamanho já existe'
+               : `Adicionar tamanho · ${inputAction.sizeLabel}`}
+            </button>
+            <button
+              type="button"
+              onClick={() => setForcedExistingId(inputAction.existingArticleId)}
+              style={{
+                width:        '100%',
+                height:       40,
+                borderRadius: 8,
+                border:       'none',
+                background:   'transparent',
+                color:        'var(--text-muted)',
+                fontSize:     13,
+                fontWeight:   500,
+                cursor:       'pointer',
+                textDecoration: 'underline',
+                textUnderlineOffset: 3,
+              }}
+            >
+              Criar artigo separado em vez disso
+            </button>
+          </>
+        ) : inDuplicateOnly && inputAction?.kind === 'duplicate_only' ? (
+          <>
+            <button
+              type="button"
+              disabled
+              aria-disabled
+              style={{
+                width:         '100%',
+                height:        56,
+                borderRadius:  12,
+                border:        '1px solid var(--border)',
+                background:    'var(--surface)',
+                color:         'var(--text-muted)',
+                fontSize:      14,
+                fontWeight:    600,
+                letterSpacing: '0.02em',
+                cursor:        'not-allowed',
+              }}
+            >
+              Artigo já existe: {inputAction.existingArticleName}
+            </button>
+            <button
+              type="button"
+              onClick={() => setForcedExistingId(inputAction.existingArticleId)}
+              style={{
+                width:        '100%',
+                height:       40,
+                borderRadius: 8,
+                border:       'none',
+                background:   'transparent',
+                color:        'var(--text-muted)',
+                fontSize:     13,
+                fontWeight:   500,
+                cursor:       'pointer',
+                textDecoration: 'underline',
+                textUnderlineOffset: 3,
+              }}
+            >
+              Criar mesmo assim
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="zesto-save-cta"
+            style={{
+              width:         '100%',
+              height:        56,
+              borderRadius:  12,
+              border:        'none',
+              background:    'var(--action)',
+              color:         'var(--text-on-primary)',
+              fontSize:      15,
+              fontWeight:    600,
+              letterSpacing: '0.02em',
+              cursor:        saving ? 'default' : 'pointer',
+              opacity:       saving ? 0.7 : 1,
+              transition:    'background 0.18s, transform 0.18s, box-shadow 0.18s, opacity 0.15s',
+            }}
+          >
+            {saving ? 'A guardar…' : isEdit ? 'Guardar Alterações' : 'Guardar Artigo'}
+          </button>
+        )}
       </div>
     </div>
   )
