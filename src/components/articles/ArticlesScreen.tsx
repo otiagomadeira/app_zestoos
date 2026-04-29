@@ -129,16 +129,6 @@ export default function ArticlesScreen() {
   const showPanel = mode !== 'idle'
   const showList  = !isMobile || !showPanel
 
-  if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh' }}>
-      <div style={{ textAlign: 'center' }}>
-        <div style={{ width: 40, height: 40, borderRadius: '50%', border: '3px solid var(--border)', borderTopColor: 'var(--action)', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' }} />
-        <p style={{ color: 'var(--text-subtle)', fontSize: 14 }}>A carregar artigos…</p>
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
-    </div>
-  )
-
   // ── List panel ─────────────────────────────────────────────────────────────
   const listPanel = (
     <div style={{
@@ -169,10 +159,14 @@ export default function ArticlesScreen() {
             }}>
               Artigos
             </h2>
-            <span aria-hidden="true" style={{ fontSize: 14, color: 'var(--text-subtle)' }}>·</span>
-            <span style={{ fontSize: 14, color: 'var(--text-subtle)', fontFamily: 'var(--font-mono), monospace' }}>
-              {activeCount}
-            </span>
+            {!loading && (
+              <>
+                <span aria-hidden="true" style={{ fontSize: 14, color: 'var(--text-subtle)' }}>·</span>
+                <span style={{ fontSize: 14, color: 'var(--text-subtle)', fontFamily: 'var(--font-mono), monospace' }}>
+                  {activeCount}
+                </span>
+              </>
+            )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
@@ -292,26 +286,44 @@ export default function ArticlesScreen() {
         flexDirection: 'column',
         gap:           6,
       }}>
-        {error && (
-          <div style={{ background: 'var(--error-surface)', border: '1px solid var(--error-border)', borderRadius: 8, padding: '10px 14px', color: 'var(--error)', fontSize: 13 }}>
-            {error}
+        {/* Loading local: spinner ocupa apenas a área da lista para não trocar
+            o layout inteiro (header + chips + cards) quando os dados chegam. */}
+        {loading ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 200 }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: '50%',
+                border: '3px solid var(--border)', borderTopColor: 'var(--action)',
+                animation: 'spin 0.8s linear infinite', margin: '0 auto 16px',
+              }} />
+              <p style={{ color: 'var(--text-subtle)', fontSize: 14 }}>A carregar artigos…</p>
+            </div>
+            <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
           </div>
+        ) : (
+          <>
+            {error && (
+              <div style={{ background: 'var(--error-surface)', border: '1px solid var(--error-border)', borderRadius: 8, padding: '10px 14px', color: 'var(--error)', fontSize: 13 }}>
+                {error}
+              </div>
+            )}
+            {displayed.length === 0 && (
+              <div style={{ textAlign: 'center', color: 'var(--text-subtle)', paddingTop: 40, fontSize: 14 }}>
+                {searchQuery.trim().length > 0
+                  ? `Sem resultados para "${searchQuery.trim()}".`
+                  : 'Nenhum artigo encontrado'}
+              </div>
+            )}
+            {displayed.map(a => (
+              <ArticleListCard
+                key={a.id}
+                article={a}
+                isSelected={selected?.id === a.id}
+                onSelect={() => handleSelect(a)}
+              />
+            ))}
+          </>
         )}
-        {displayed.length === 0 && (
-          <div style={{ textAlign: 'center', color: 'var(--text-subtle)', paddingTop: 40, fontSize: 14 }}>
-            {searchQuery.trim().length > 0
-              ? `Sem resultados para "${searchQuery.trim()}".`
-              : 'Nenhum artigo encontrado'}
-          </div>
-        )}
-        {displayed.map(a => (
-          <ArticleListCard
-            key={a.id}
-            article={a}
-            isSelected={selected?.id === a.id}
-            onSelect={() => handleSelect(a)}
-          />
-        ))}
         {/* Padding extra no fundo para o último card não ficar coberto pelo FAB. */}
         <div style={{ height: 80, flexShrink: 0 }} aria-hidden="true" />
       </div>
@@ -321,12 +333,13 @@ export default function ArticlesScreen() {
   )
 
   // ── Right panel ────────────────────────────────────────────────────────────
-  // Detalhe partilha o tom cremoso da lista — continuação visual do mesmo
-  // fluxo, não um overlay. BulkImportPanel mantém fundo --primary (--primary
-  // por design — é overlay cheio sobre lista, não master-detail).
+  // Tanto detalhe (ArticleForm) como bulk (BulkImportPanel) partilham a
+  // superfície cremosa da lista. Identidade visual única: o que muda é a
+  // densidade interna, não a cor de base. Preparado para futuro modo
+  // claro/escuro — tokens semânticos (--bg/--surface/--text) flipam juntos.
   const rightPanel = (
     <div style={{
-      background:     mode === 'bulk-import' ? 'var(--primary)' : 'var(--bg)',
+      background:     'var(--bg)',
       display:        'flex',
       flexDirection:  'column',
       height:         '100%',
