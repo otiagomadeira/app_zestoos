@@ -827,6 +827,15 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
   const orderedOkLines = [...lowOkLines, ...restOkLines]
   const ignoredCount   = partialLines.length + dupLines.length
 
+  // Aviso operacional: artigos criados com par_level vazio/<=0 nunca aparecem
+  // em order_suggestions. Não bloqueia (chef pode estar a inventariar primeiro
+  // e definir mínimos depois), só sinaliza acima do CTA.
+  const noMinimumCount = okLines.filter(line => {
+    const ui    = uiState.get(line.id) ?? defaultUiState()
+    const value = parseFloat(ui.parDisplay)
+    return !Number.isFinite(value) || value <= 0
+  }).length
+
   const handleCreate = async () => {
     setError(null)
     setSaving(true)
@@ -1330,6 +1339,21 @@ export default function BulkImportPanel({ articles, onCancel, onBatchCreated }: 
 
         {step === 'preview' && (
           <>
+            {!saving && noMinimumCount > 0 && (
+              <div style={{
+                background:   'var(--warning-surface)',
+                border:       '1px solid var(--warning)',
+                color:        'var(--text)',
+                fontSize:     12,
+                borderRadius: 8,
+                padding:      '8px 10px',
+                lineHeight:   1.4,
+              }}>
+                {noMinimumCount === 1
+                  ? '1 artigo sem mínimo — não vai aparecer nas sugestões de encomenda.'
+                  : `${noMinimumCount} artigos sem mínimo — não vão aparecer nas sugestões de encomenda.`}
+              </div>
+            )}
             <button
               onClick={handleCreate}
               disabled={saving || okLines.length === 0}
