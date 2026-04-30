@@ -816,7 +816,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
 
   const handleToggleActive = async () => {
     if (!existing) return
-    if (existing.is_active && !confirm(`Desativar "${existing.name}"? O artigo deixa de aparecer nas sugestões de encomenda.`)) return
+    if (existing.is_active && !confirm(`Arquivar "${existing.name}"? Ele deixa de aparecer no inventário e encomendas.`)) return
     setSaving(true)
     setError(null)
     try {
@@ -2000,7 +2000,7 @@ export default function ArticleForm({ existing, articles, onSaved, onCancel }: P
                 cursor:       'pointer',
               }}
             >
-              {existing.is_active ? 'Desativar Artigo' : 'Reativar Artigo'}
+              {existing.is_active ? 'Arquivar Artigo' : 'Restaurar Artigo'}
             </button>
           </div>
         )}

@@ -8,6 +8,7 @@
  */
 
 import { createClient } from '@/lib/supabase/client'
+import { invalidateCache } from '@/lib/cache'
 import type { ArticleSize } from '@/types/database'
 
 /**
@@ -32,4 +33,32 @@ export async function fetchArticleSizes(articleId: string): Promise<ArticleSize[
     return []
   }
   return (data ?? []) as ArticleSize[]
+}
+
+// Soft-delete via is_active. Articles permanecem na DB e em todas as views
+// dependentes (current_stock, order_suggestions, production_cost, etc.) deixam
+// de aparecer porque já filtram WHERE is_active = TRUE. Restaurar inverte.
+//
+// O ArticleForm individual usa toggleArticleActive() em supabase.ts para o
+// toggle de 1 artigo (em edição). archiveArticles() existe para o caso bulk.
+
+export async function archiveArticles(ids: string[]): Promise<void> {
+  if (ids.length === 0) return
+  const supabase = createClient()
+  const { error } = await supabase
+    .from('articles')
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .in('id', ids)
+  if (error) throw error
+  invalidateCache('all_articles', 'articles_active')
+}
+
+export async function restoreArticle(id: string): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase
+    .from('articles')
+    .update({ is_active: true, updated_at: new Date().toISOString() })
+    .eq('id', id)
+  if (error) throw error
+  invalidateCache('all_articles', 'articles_active')
 }

@@ -1,5 +1,11 @@
 'use client'
 
+// TODO(archive-articles follow-up): quando uma linha do bulk import bater num
+// artigo arquivado (mesmo nome canónico), oferecer "Restaurar artigo" em vez
+// de criar duplicado. Hoje o panel filtra duplicados apenas contra artigos
+// activos via `articles` prop (que vem da listagem). Não implementado nesta
+// task para manter o scope mínimo — ver decisão D2 em feat/archive-articles.
+
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Article } from '@/types/database'

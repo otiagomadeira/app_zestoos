@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { Article } from '@/types/database'
 import { fetchAllArticles } from '@/lib/supabase'
+import { archiveArticles } from '@/lib/articles'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { ARTICLE_CATEGORIES, normalizeCanonicalCategory } from '@/lib/categoryKeywords'
 import { searchMatch } from '@/lib/search'
@@ -17,12 +18,11 @@ import BulkImportPanel from './BulkImportPanel'
 // ArticleForm) continua activa — só o gestor visual deixou de ser visível.
 type Mode = 'idle' | 'create' | 'edit' | 'bulk-import'
 
-type StatusFilter = 'active' | 'all' | 'inactive'
+type StatusFilter = 'active' | 'archived'
 
 const STATUS_LABEL: Record<StatusFilter, string> = {
   active:   'Ativos',
-  all:      'Todos',
-  inactive: 'Inativos',
+  archived: 'Arquivados',
 }
 
 export default function ArticlesScreen() {
@@ -36,12 +36,19 @@ export default function ArticlesScreen() {
   const [addMenuOpen,      setAddMenuOpen]      = useState(false)
   const addMenuRef                              = useRef<HTMLDivElement | null>(null)
 
-  // Filtros — espelham o padrão Inventário (chips de categoria + dropdown de
+  // Filtros — espelham o padrão Inventário (chips de categoria + segmented de
   // estado + FAB de pesquisa). Default 'active' porque na UI de Artigos o
   // utilizador quase sempre quer ver só o que está em uso.
   const [searchQuery,      setSearchQuery]      = useState<string>('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [statusFilter,     setStatusFilter]     = useState<StatusFilter>('active')
+
+  // Modo Selecionar — apenas activado na tab Ativos. Permite arquivar em bulk
+  // sem precisar de abrir cada artigo. Restaurar continua a ser feito 1-a-1
+  // via ArticleForm (decisão D2: evitar ruído visual no card).
+  const [selectionMode,    setSelectionMode]    = useState(false)
+  const [selectedIds,      setSelectedIds]      = useState<Set<string>>(new Set())
+  const [bulkArchiving,    setBulkArchiving]    = useState(false)
 
   useEffect(() => {
     if (!addMenuOpen) return
@@ -75,6 +82,22 @@ export default function ArticlesScreen() {
 
   useEffect(() => { load() }, [load])
 
+  const exitSelection = useCallback(() => {
+    setSelectionMode(false)
+    setSelectedIds(new Set())
+  }, [])
+
+  // Mudar de tab ou abrir um detalhe sai do modo seleção — caso contrário
+  // ficaríamos com checkboxes em Arquivados (sem efeito) ou sobre um artigo
+  // que está em edição.
+  useEffect(() => {
+    if (selectionMode && statusFilter !== 'active') exitSelection()
+  }, [statusFilter, selectionMode, exitSelection])
+
+  useEffect(() => {
+    if (selectionMode && mode !== 'idle') exitSelection()
+  }, [mode, selectionMode, exitSelection])
+
   const hasUncategorized = useMemo(
     () => articles.some(a => normalizeCanonicalCategory(a.category) === null),
     [articles]
@@ -98,17 +121,14 @@ export default function ArticlesScreen() {
       pool = pool.filter(a => normalizeCanonicalCategory(a.category) === selectedCategory)
     }
 
-    if (statusFilter === 'active')   pool = pool.filter(a =>  a.is_active)
-    if (statusFilter === 'inactive') pool = pool.filter(a => !a.is_active)
-    // 'all' → sem filtro
+    pool = pool.filter(a => statusFilter === 'active' ? a.is_active : !a.is_active)
 
     return pool.slice().sort(byName)
   }, [articles, searchQuery, selectedCategory, statusFilter])
 
-  const activeCount = useMemo(
-    () => articles.filter(a => a.is_active).length,
-    [articles]
-  )
+  const activeCount   = useMemo(() => articles.filter(a =>  a.is_active).length, [articles])
+  const archivedCount = useMemo(() => articles.filter(a => !a.is_active).length, [articles])
+  const visibleCount  = statusFilter === 'active' ? activeCount : archivedCount
 
   const handleSaved = (article: Article) => {
     setArticles(prev => {
@@ -126,6 +146,39 @@ export default function ArticlesScreen() {
     setMode('edit')
   }
 
+  const toggleSelected = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  const handleBulkArchive = async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    const msg = `Arquivar ${ids.length} ${ids.length === 1 ? 'artigo' : 'artigos'}? `
+              + (ids.length === 1 ? 'Ele deixa' : 'Eles deixam')
+              + ' de aparecer no inventário e encomendas.'
+    if (!confirm(msg)) return
+
+    setBulkArchiving(true)
+    setError(null)
+    try {
+      await archiveArticles(ids)
+      const stamp = new Date().toISOString()
+      setArticles(prev => prev.map(a => selectedIds.has(a.id)
+        ? { ...a, is_active: false, updated_at: stamp }
+        : a
+      ))
+      exitSelection()
+    } catch (e: unknown) {
+      setError((e as Error).message ?? 'Erro ao arquivar artigos')
+    } finally {
+      setBulkArchiving(false)
+    }
+  }
+
   const showPanel = mode !== 'idle'
   const showList  = !isMobile || !showPanel
 
@@ -140,9 +193,9 @@ export default function ArticlesScreen() {
       overflow:      'hidden',
       position:      'relative',
     }}>
-      {/* Header — espelha o padrão de Inventário (título+contagem · filtro de
-          estado), com a única diferença de ter o "+ Adicionar" porque é a
-          acção principal desta página. */}
+      {/* Header — duas linhas:
+          1) Título + contagem | "+ Adicionar" (ou "Cancelar" em modo seleção)
+          2) Segmented [Ativos|Arquivados] | "Selecionar" (só em Ativos)        */}
       <div style={{ padding: '12px 20px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
         <div style={{
           display:        'flex',
@@ -157,90 +210,134 @@ export default function ArticlesScreen() {
               fontSize: 18, fontWeight: 700, color: 'var(--text)', margin: 0,
               whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>
-              Artigos
+              {selectionMode ? `${selectedIds.size} selecionado${selectedIds.size === 1 ? '' : 's'}` : 'Artigos'}
             </h2>
-            {!loading && (
+            {!loading && !selectionMode && (
               <>
                 <span aria-hidden="true" style={{ fontSize: 14, color: 'var(--text-subtle)' }}>·</span>
                 <span style={{ fontSize: 14, color: 'var(--text-subtle)', fontFamily: 'var(--font-mono), monospace' }}>
-                  {activeCount}
+                  {visibleCount}
                 </span>
               </>
             )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-            <StatusFilterDropdown value={statusFilter} onChange={setStatusFilter} />
-
-            <div ref={addMenuRef} style={{ position: 'relative' }}>
+            {selectionMode ? (
               <button
                 type="button"
-                onClick={() => setAddMenuOpen(o => !o)}
-                aria-haspopup="menu"
-                aria-expanded={addMenuOpen}
-                aria-label="Adicionar artigo"
-                style={{
-                  height:       'var(--touch-min)',
-                  padding:      '0 12px',
-                  borderRadius: 8,
-                  border:       'none',
-                  background:   'var(--action)',
-                  color:        'var(--text-on-primary)',
-                  fontSize:     13,
-                  fontWeight:   600,
-                  cursor:       'pointer',
-                  display:      'flex',
-                  alignItems:   'center',
-                  gap:          6,
-                  touchAction:  'manipulation',
-                  whiteSpace:   'nowrap',
-                }}
+                onClick={exitSelection}
+                disabled={bulkArchiving}
+                style={ghostButtonStyle}
               >
-                + Adicionar
-                <span aria-hidden="true" style={{ fontSize: 10, opacity: 0.7 }}>▾</span>
+                Cancelar
               </button>
-
-              {addMenuOpen && (
-                <div
-                  role="menu"
+            ) : (
+              <div ref={addMenuRef} style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  onClick={() => setAddMenuOpen(o => !o)}
+                  aria-haspopup="menu"
+                  aria-expanded={addMenuOpen}
+                  aria-label="Adicionar artigo"
                   style={{
-                    position:      'absolute',
-                    top:           'calc(100% + 6px)',
-                    right:         0,
-                    zIndex:        50,
-                    minWidth:      200,
-                    maxWidth:      'calc(100vw - 32px)',
-                    background:    'var(--surface)',
-                    border:        '1px solid var(--border)',
-                    borderRadius:  10,
-                    boxShadow:     '0 8px 24px var(--border)',
-                    padding:       4,
-                    display:       'flex',
-                    flexDirection: 'column',
-                    gap:           2,
+                    height:       'var(--touch-min)',
+                    padding:      '0 12px',
+                    borderRadius: 8,
+                    border:       'none',
+                    background:   'var(--action)',
+                    color:        'var(--text-on-primary)',
+                    fontSize:     13,
+                    fontWeight:   600,
+                    cursor:       'pointer',
+                    display:      'flex',
+                    alignItems:   'center',
+                    gap:          6,
+                    touchAction:  'manipulation',
+                    whiteSpace:   'nowrap',
                   }}
                 >
-                  <button
-                    role="menuitem"
-                    type="button"
-                    onClick={() => { setSelected(null); setMode('create'); setAddMenuOpen(false) }}
-                    style={menuItemStyle}
+                  + Adicionar
+                  <span aria-hidden="true" style={{ fontSize: 10, opacity: 0.7 }}>▾</span>
+                </button>
+
+                {addMenuOpen && (
+                  <div
+                    role="menu"
+                    style={{
+                      position:      'absolute',
+                      top:           'calc(100% + 6px)',
+                      right:         0,
+                      zIndex:        50,
+                      minWidth:      200,
+                      maxWidth:      'calc(100vw - 32px)',
+                      background:    'var(--surface)',
+                      border:        '1px solid var(--border)',
+                      borderRadius:  10,
+                      boxShadow:     '0 8px 24px var(--border)',
+                      padding:       4,
+                      display:       'flex',
+                      flexDirection: 'column',
+                      gap:           2,
+                    }}
                   >
-                    Escrever artigo
-                  </button>
-                  <button
-                    role="menuitem"
-                    type="button"
-                    onClick={() => { setMode('bulk-import'); setAddMenuOpen(false) }}
-                    style={menuItemStyle}
-                  >
-                    Colar lista
-                  </button>
-                </div>
-              )}
-            </div>
+                    <button
+                      role="menuitem"
+                      type="button"
+                      onClick={() => { setSelected(null); setMode('create'); setAddMenuOpen(false) }}
+                      style={menuItemStyle}
+                    >
+                      Escrever artigo
+                    </button>
+                    <button
+                      role="menuitem"
+                      type="button"
+                      onClick={() => { setMode('bulk-import'); setAddMenuOpen(false) }}
+                      style={menuItemStyle}
+                    >
+                      Colar lista
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
+
+        {/* Linha 2 do header: filtro + Selecionar. Escondida em modo seleção. */}
+        {!selectionMode && (
+          <div style={{
+            display:        'flex',
+            alignItems:     'center',
+            justifyContent: 'space-between',
+            gap:            12,
+            marginBottom:   10,
+            minHeight:      'var(--touch-min)',
+          }}>
+            <SegmentedFilter
+              value={statusFilter}
+              onChange={setStatusFilter}
+              activeCount={activeCount}
+              archivedCount={archivedCount}
+            />
+            {statusFilter === 'active' && articles.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  // Fecha qualquer form aberto antes de entrar em modo seleção,
+                  // caso contrário o useEffect "exit on mode change" cancela.
+                  setMode('idle')
+                  setSelected(null)
+                  setSelectionMode(true)
+                  setSelectedIds(new Set())
+                }}
+                style={ghostButtonStyle}
+              >
+                Selecionar
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Chips de categoria — copy do InventoryScreen para manter consistência
             visual sem extrair componente partilhado nesta primeira passada. */}
@@ -307,11 +404,27 @@ export default function ArticlesScreen() {
                 {error}
               </div>
             )}
+            {statusFilter === 'archived' && displayed.length > 0 && (
+              <div style={{
+                padding:      '10px 14px',
+                fontSize:     13,
+                lineHeight:   1.45,
+                color:        'var(--text-muted)',
+                background:   'var(--surface)',
+                border:       '1px solid var(--border)',
+                borderRadius: 8,
+                marginBottom: 4,
+              }}>
+                Artigos arquivados não aparecem no inventário nem nas encomendas. Abre um artigo para restaurar.
+              </div>
+            )}
             {displayed.length === 0 && (
               <div style={{ textAlign: 'center', color: 'var(--text-subtle)', paddingTop: 40, fontSize: 14 }}>
                 {searchQuery.trim().length > 0
                   ? `Sem resultados para "${searchQuery.trim()}".`
-                  : 'Nenhum artigo encontrado'}
+                  : statusFilter === 'archived'
+                    ? 'Nenhum artigo arquivado.'
+                    : 'Nenhum artigo encontrado'}
               </div>
             )}
             {displayed.map(a => (
@@ -319,16 +432,29 @@ export default function ArticlesScreen() {
                 key={a.id}
                 article={a}
                 isSelected={selected?.id === a.id}
+                selectionMode={selectionMode}
+                isChecked={selectedIds.has(a.id)}
                 onSelect={() => handleSelect(a)}
+                onToggle={() => toggleSelected(a.id)}
               />
             ))}
           </>
         )}
-        {/* Padding extra no fundo para o último card não ficar coberto pelo FAB. */}
+        {/* Padding extra no fundo para o último card não ficar coberto pela
+            FAB de pesquisa ou pela barra de seleção. */}
         <div style={{ height: 80, flexShrink: 0 }} aria-hidden="true" />
       </div>
 
-      <FloatingSearch query={searchQuery} onChange={setSearchQuery} />
+      {selectionMode ? (
+        <SelectionBar
+          count={selectedIds.size}
+          loading={bulkArchiving}
+          onCancel={exitSelection}
+          onArchive={handleBulkArchive}
+        />
+      ) : (
+        <FloatingSearch query={searchQuery} onChange={setSearchQuery} />
+      )}
     </div>
   )
 
@@ -398,12 +524,15 @@ export default function ArticlesScreen() {
 // ── Card ─────────────────────────────────────────────────────────────────────
 
 interface ArticleListCardProps {
-  article:    Article
-  isSelected: boolean
-  onSelect:   () => void
+  article:       Article
+  isSelected:    boolean
+  selectionMode: boolean
+  isChecked:     boolean
+  onSelect:      () => void
+  onToggle:      () => void
 }
 
-function ArticleListCard({ article, isSelected, onSelect }: ArticleListCardProps) {
+function ArticleListCard({ article, isSelected, selectionMode, isChecked, onSelect, onToggle }: ArticleListCardProps) {
   // Card compacto, single-row — espelha o pattern visual do Inventário:
   // alinhamento vertical centrado (alignItems:center) e nome em flex:1.
   // Stock mínimo / par level NÃO aparece aqui — esta lista é gestão de
@@ -412,10 +541,15 @@ function ArticleListCard({ article, isSelected, onSelect }: ArticleListCardProps
   // <div role="button"> em vez de <button> nativo para evitar o bug do
   // iOS Safari que colapsava cards multi do Inventário (button + flex
   // children ignora min-height — ver commit 5f3ec50).
+  const handleClick = () => {
+    if (selectionMode) onToggle()
+    else onSelect()
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
-      onSelect()
+      handleClick()
     }
   }
 
@@ -423,29 +557,55 @@ function ArticleListCard({ article, isSelected, onSelect }: ArticleListCardProps
 
   return (
     <div
-      role="button"
+      role={selectionMode ? 'checkbox' : 'button'}
+      aria-checked={selectionMode ? isChecked : undefined}
       tabIndex={0}
-      onClick={onSelect}
+      onClick={handleClick}
       onKeyDown={handleKeyDown}
-      aria-pressed={isSelected}
+      aria-pressed={!selectionMode ? isSelected : undefined}
       style={{
         width:        '100%',
-        background:   isSelected ? 'var(--action-surface)' : 'var(--surface)',
-        border:       `1px solid ${isSelected ? 'var(--action)' : 'var(--border)'}`,
+        background:   isChecked
+                        ? 'var(--action-surface)'
+                        : isSelected && !selectionMode
+                          ? 'var(--action-surface)'
+                          : 'var(--surface)',
+        border:       `1px solid ${isChecked || (isSelected && !selectionMode) ? 'var(--action)' : 'var(--border)'}`,
         borderRadius: 10,
         padding:      '8px 12px',
         minHeight:    56,
         flexShrink:   0,
         display:      'flex',
         alignItems:   'center',
-        gap:          8,
+        gap:          10,
         cursor:       'pointer',
         touchAction:  'manipulation',
         textAlign:    'left',
-        boxShadow:    isSelected ? '0 4px 14px rgba(196, 106, 45, 0.18)' : 'none',
+        boxShadow:    (isChecked || (isSelected && !selectionMode)) ? '0 4px 14px rgba(196, 106, 45, 0.18)' : 'none',
         transition:   'box-shadow 0.18s, border-color 0.15s, background 0.15s',
       }}
     >
+      {selectionMode && (
+        <span
+          aria-hidden="true"
+          style={{
+            width:        20,
+            height:       20,
+            borderRadius: 4,
+            border:       `2px solid ${isChecked ? 'var(--action)' : 'var(--text-subtle)'}`,
+            background:   isChecked ? 'var(--action)' : 'transparent',
+            color:        'var(--text-on-primary)',
+            display:      'flex',
+            alignItems:   'center',
+            justifyContent: 'center',
+            fontSize:     12,
+            fontWeight:   700,
+            flexShrink:   0,
+          }}
+        >
+          {isChecked ? '✓' : ''}
+        </span>
+      )}
       <span style={{
         flex:         1,
         minWidth:     0,
@@ -470,7 +630,7 @@ function ArticleListCard({ article, isSelected, onSelect }: ArticleListCardProps
           padding:       '1px 5px',
           flexShrink:    0,
         }}>
-          INATIVO
+          ARQUIVADO
         </span>
       )}
       <span style={{
@@ -485,101 +645,146 @@ function ArticleListCard({ article, isSelected, onSelect }: ArticleListCardProps
   )
 }
 
-// ── Status filter dropdown ───────────────────────────────────────────────────
+// ── Segmented filter (Ativos | Arquivados) ───────────────────────────────────
 
-function StatusFilterDropdown({
+function SegmentedFilter({
   value,
   onChange,
+  activeCount,
+  archivedCount,
 }: {
-  value:    StatusFilter
-  onChange: (next: StatusFilter) => void
+  value:         StatusFilter
+  onChange:      (next: StatusFilter) => void
+  activeCount:   number
+  archivedCount: number
 }) {
-  const [open, setOpen] = useState(false)
-
+  const options: { key: StatusFilter; count: number }[] = [
+    { key: 'active',   count: activeCount   },
+    { key: 'archived', count: archivedCount },
+  ]
   return (
-    <div style={{ position: 'relative', flexShrink: 0 }}>
+    <div
+      role="tablist"
+      aria-label="Filtrar por estado"
+      style={{
+        display:      'inline-flex',
+        background:   'var(--surface)',
+        border:       '1px solid var(--border)',
+        borderRadius: 8,
+        padding:      2,
+        gap:          2,
+        flexShrink:   0,
+      }}
+    >
+      {options.map(({ key, count }) => {
+        const active = key === value
+        return (
+          <button
+            key={key}
+            role="tab"
+            type="button"
+            aria-selected={active}
+            onClick={() => onChange(key)}
+            style={{
+              minHeight:    'calc(var(--touch-min) - 4px)',
+              padding:      '0 12px',
+              borderRadius: 6,
+              border:       'none',
+              background:   active ? 'var(--bg)' : 'transparent',
+              color:        active ? 'var(--text)' : 'var(--text-muted)',
+              fontSize:     13,
+              fontWeight:   active ? 700 : 500,
+              cursor:       'pointer',
+              touchAction:  'manipulation',
+              whiteSpace:   'nowrap',
+              display:      'flex',
+              alignItems:   'center',
+              gap:          6,
+              boxShadow:    active ? '0 1px 3px rgba(28, 20, 10, 0.12)' : 'none',
+              transition:   'background 0.15s, color 0.15s',
+            }}
+          >
+            {STATUS_LABEL[key]}
+            <span style={{
+              fontFamily: 'var(--font-mono), monospace',
+              fontSize:   11,
+              color:      active ? 'var(--text-muted)' : 'var(--text-subtle)',
+              fontWeight: 500,
+            }}>
+              {count}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Selection bar (bottom) ───────────────────────────────────────────────────
+
+function SelectionBar({
+  count,
+  loading,
+  onCancel,
+  onArchive,
+}: {
+  count:     number
+  loading:   boolean
+  onCancel:  () => void
+  onArchive: () => void
+}) {
+  const disabled = count === 0 || loading
+  return (
+    <div
+      role="toolbar"
+      aria-label="Acções de seleção"
+      style={{
+        position:       'absolute',
+        bottom:         0,
+        left:           0,
+        right:          0,
+        background:     'var(--surface)',
+        borderTop:      '1px solid var(--border)',
+        padding:        '10px 14px',
+        display:        'flex',
+        gap:            8,
+        alignItems:     'center',
+        boxShadow:      '0 -4px 16px rgba(28, 20, 10, 0.08)',
+        zIndex:         40,
+      }}
+    >
       <button
         type="button"
-        onClick={() => setOpen(o => !o)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={`Filtro: ${STATUS_LABEL[value]}`}
+        onClick={onCancel}
+        disabled={loading}
         style={{
-          minHeight:    'var(--touch-min)',
-          padding:      '0 12px',
+          ...ghostButtonStyle,
+          flexShrink: 0,
+        }}
+      >
+        Cancelar
+      </button>
+      <button
+        type="button"
+        onClick={onArchive}
+        disabled={disabled}
+        style={{
+          flex:         1,
+          height:       'var(--touch-min)',
+          padding:      '0 16px',
           borderRadius: 8,
-          border:       '1px solid var(--border)',
-          background:   'var(--surface)',
-          color:        'var(--text)',
-          fontSize:     13,
+          border:       'none',
+          background:   disabled ? 'var(--surface-2)' : 'var(--action)',
+          color:        disabled ? 'var(--text-subtle)' : 'var(--text-on-primary)',
+          fontSize:     14,
           fontWeight:   600,
-          display:      'flex',
-          alignItems:   'center',
-          gap:          6,
-          cursor:       'pointer',
+          cursor:       disabled ? 'not-allowed' : 'pointer',
           touchAction:  'manipulation',
           whiteSpace:   'nowrap',
         }}
       >
-        <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Filtro:</span>
-        <span>{STATUS_LABEL[value]}</span>
-        <span aria-hidden="true" style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 2 }}>▾</span>
+        {loading ? 'A arquivar…' : `Arquivar ${count}`}
       </button>
-      {open && (
-        <>
-          <div
-            onClick={() => setOpen(false)}
-            aria-hidden="true"
-            style={{ position: 'fixed', inset: 0, zIndex: 50 }}
-          />
-          <div
-            role="menu"
-            style={{
-              position:     'absolute',
-              top:          'calc(100% + 4px)',
-              right:        0,
-              background:   'var(--surface-2)',
-              border:       '1px solid var(--border)',
-              borderRadius: 8,
-              minWidth:     160,
-              zIndex:       51,
-              overflow:     'hidden',
-              boxShadow:    '0 4px 16px var(--border)',
-            }}
-          >
-            {(['active', 'all', 'inactive'] as const).map(opt => {
-              const active = opt === value
-              return (
-                <button
-                  key={opt}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => { onChange(opt); setOpen(false) }}
-                  style={{
-                    width:      '100%',
-                    minHeight:  44,
-                    padding:    '10px 14px',
-                    background: active ? 'var(--bg)' : 'transparent',
-                    border:     'none',
-                    color:      'var(--text)',
-                    fontSize:   14,
-                    fontWeight: active ? 700 : 500,
-                    textAlign:  'left',
-                    cursor:     'pointer',
-                    display:    'flex',
-                    alignItems: 'center',
-                    gap:        8,
-                  }}
-                >
-                  {active && <span aria-hidden="true" style={{ color: 'var(--success)', fontWeight: 700 }}>✓</span>}
-                  {!active && <span aria-hidden="true" style={{ width: 12, display: 'inline-block' }} />}
-                  {STATUS_LABEL[opt]}
-                </button>
-              )
-            })}
-          </div>
-        </>
-      )}
     </div>
   )
 }
@@ -634,4 +839,18 @@ const menuItemStyle: React.CSSProperties = {
   fontSize:      14,
   cursor:        'pointer',
   touchAction:   'manipulation',
+}
+
+const ghostButtonStyle: React.CSSProperties = {
+  height:       'var(--touch-min)',
+  padding:      '0 12px',
+  borderRadius: 8,
+  border:       '1px solid var(--border)',
+  background:   'var(--surface)',
+  color:        'var(--text)',
+  fontSize:     13,
+  fontWeight:   600,
+  cursor:       'pointer',
+  touchAction:  'manipulation',
+  whiteSpace:   'nowrap',
 }
